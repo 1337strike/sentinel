@@ -49,6 +49,7 @@ import asyncio
 import contextlib
 import re
 import ssl
+import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -454,12 +455,50 @@ def _tls_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    # Legacy embedded stacks frequently negotiate only old ciphers; a study that
-    # cannot connect to them under-reports exposure, which is the opposite of
-    # the goal here.
-    context.minimum_version = ssl.TLSVersion.TLSv1
-    with contextlib.suppress(ssl.SSLError):  # depends on the OpenSSL build
+
+    # Legacy embedded stacks frequently negotiate only old protocol versions and
+    # ciphers; a study that cannot complete the handshake under-reports exposure,
+    # which is the opposite of the goal here.
+    #
+    # Both adjustments below are best-effort and must not be fatal:
+    #
+    #   * Assigning TLSv1/TLSv1_1 to minimum_version raises DeprecationWarning
+    #     on CPython 3.10+, which becomes an exception under `-W error` (this
+    #     project's own pytest configuration sets error::DeprecationWarning).
+    #     Future releases may remove the enum members outright.
+    #   * SECLEVEL=0 is an OpenSSL-specific cipher string. Distributions with a
+    #     hardened crypto policy -- Arch's current OpenSSL 3.5+ among them --
+    #     may reject it.
+    #
+    # Failing either one degrades reach (very old devices become unreachable);
+    # raising would abort the whole run. Degrade, and say so in the log.
+    for version in (ssl.TLSVersion.TLSv1, ssl.TLSVersion.TLSv1_2):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                context.minimum_version = version
+            break
+        except (ValueError, OSError, AttributeError):
+            continue
+    else:  # pragma: no cover -- only on an unusually strict build
+        log_event(
+            _log,
+            "tls_floor_unavailable",
+            "could not lower the TLS floor; devices offering only legacy "
+            "protocol versions will be unreachable and under-reported",
+            level=30,
+        )
+
+    try:
         context.set_ciphers("DEFAULT@SECLEVEL=0")
+    except ssl.SSLError:
+        log_event(
+            _log,
+            "tls_seclevel_unavailable",
+            "OpenSSL rejected SECLEVEL=0; devices offering only legacy ciphers "
+            "will be unreachable and under-reported",
+            level=30,
+        )
     return context
 
 

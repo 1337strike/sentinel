@@ -60,17 +60,103 @@ fault under scan pressure. Ports are classified OT/web, a target set containing
 
 ---
 
-## Install
+## Install (Arch Linux)
+
+### 1. System packages
+
+```bash
+# Offline pipeline only — this is all you need to replay a full study
+sudo pacman -S --needed git python base-devel
+
+# Active scanning + enrichment (optional)
+sudo pacman -S --needed masscan nmap whois
+
+# Lab containers (optional)
+sudo pacman -S --needed docker docker-compose
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"      # re-login for this to take effect
+
+# KVM/QEMU testbed (optional)
+sudo pacman -S --needed qemu-full libvirt virt-install dnsmasq iptables-nft
+sudo systemctl enable --now libvirtd
+sudo usermod -aG libvirt "$USER"
+```
+
+`masscan` (extra, 1.3.2), `pyenv` (extra), `libvirt` and `qemu-full` (extra) are
+confirmed present in the official repositories. If `pacman` reports any other
+name above as not found, locate it with `pacman -Ss <name>` rather than reaching
+for the AUR — all of these are official packages.
+
+### 2. Pin the interpreter — read this before using system Python
+
+Arch currently ships **Python 3.14**. This project is verified on **3.11**; 3.12
+and 3.13 are expected to work, and **3.14 is untested**. `aiohttp` and
+`cryptography` are the realistic 3.14 risks (no wheel for the running
+interpreter means a source build, which needs a Rust toolchain for
+`cryptography`).
+
+Arch is also a rolling release, so a system-Python venv silently inherits a new
+minor version on any `pacman -Syu` and can break mid-study. For research you
+want the interpreter pinned, which is what `.python-version` is for:
+
+```bash
+sudo pacman -S --needed pyenv
+# pyenv build dependencies on Arch
+sudo pacman -S --needed base-devel openssl zlib xz tk libffi bzip2 readline sqlite
+
+# bash; use ~/.zshrc for zsh
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc && exec "$SHELL"
+
+pyenv install 3.11.11
+```
+
+Use system Python only if you accept the untested-3.14 risk and the rolling
+upgrade exposure.
+
+### 3. Project
 
 ```bash
 git clone https://github.com/1337strike/sentinel && cd sentinel
-python -m venv .venv && . .venv/bin/activate      # never system Python
+pyenv local 3.11.11          # skip if using system Python
+python -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-`masscan` is an intentional external dependency, not bundled — active scanning
-needs it on `PATH` (`apt install masscan` / `pacman -S masscan`). Everything
-else, including the full offline pipeline, runs without it.
+Arch marks system Python as externally managed (PEP 668), so `pip install`
+outside a venv is refused. That is the correct behaviour and the venv above is
+the answer — do **not** reach for `--break-system-packages`.
+
+### 4. Verify
+
+```bash
+sentinel credentials      # endpoint inventory; confirms the credential guard
+sentinel --version
+```
+
+Then run the offline pipeline in the next section. If it produces
+6 CRITICAL / 1 HIGH / 6 MEDIUM / 3 LOW over 16 targets, the install is good.
+
+### 5. masscan without root
+
+`masscan` needs raw sockets. Grant the capability instead of running the whole
+scanner as root:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin+eip /usr/bin/masscan
+masscan --version
+```
+
+Note that `setcap` is cleared by every `pacman` upgrade of the package, so
+re-apply it after updates. Sentinel detects the missing privilege and says so
+explicitly rather than failing opaquely.
+
+### Other distributions
+
+Nothing here is Arch-specific beyond package names — Debian/Ubuntu is
+`apt install masscan nmap whois docker.io docker-compose qemu-kvm libvirt-daemon-system`.
+`masscan` is an intentional external dependency and is never bundled. The full
+offline pipeline needs none of the optional packages.
 
 ## Run it offline, right now
 
