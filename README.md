@@ -169,6 +169,47 @@ rotate or clear function.
 
 ---
 
+## Verification status — read this before running experiments
+
+**Executed and verified:**
+
+- Offline pipeline end-to-end (`scan → fingerprint → enrich → report`), 16 targets
+- **Live** async fingerprint against a real socket (aiohttp, `probe_http`,
+  candidate path probing, auth-wall detection) — scores **0.864, identical to
+  the offline replay**, which is what makes offline reproduction trustworthy
+- `monitor` over two cycles: baseline, diff, alert file; 0 alerts on an
+  identical cycle (determinism), 34 correctly-graded alerts on a changed pair
+- Refusals: `--active` without scope → exit 2; direct `ActiveGrant(...)` →
+  `ModeViolation`; denylist refusing documentation/private ranges
+- Audit hash-chain; credential guard (14 matching env vars ignored); grep gate
+  zero matches; ruff + black clean
+- Threshold sweep 0.20/0.45/0.70 → 9/7/5 confirmed hosts, controls at 0.000
+  confidence at every operating point
+
+**Never executed — expect these to be where breakage lives:**
+
+- `masscan` subprocess (binary not installed in the dev container; only the
+  `--dry-run` fixture path has run). Argument construction, rate clamping and
+  output parsing are unit-level sound but the real invocation is unproven.
+- Live dataset calls to `stat.ripe.net`, `internetdb.shodan.io`, RIR delegation
+  downloads and RDAP — outbound HTTPS is blocked by the dev container's proxy,
+  so only fixture replay has run.
+- TLS certificate extraction (`_attach_tls_metadata`, layer L2) — needs an
+  HTTPS target; **no TLS target exists in the testbed yet**, so L2 has never
+  contributed to any score.
+- Reverse DNS (dnspython), live WHOIS/RDAP org attribution
+- `verify_with_nmap` (nmap not installed)
+- There is **no test suite yet**, so none of the above is protected against
+  regression.
+
+Three bugs were found by running it rather than reading it, which is why the
+list above matters: the L5 URL-probe layer probed the alphabetically-first paths
+in the whole database against every host (so L5 never fired live, and any
+layer-ablation result would have been an artifact); `dry_run: true` in
+`monitor.yaml` was silently ignored for dataset lookups; and the monitor path
+discovered zero prefixes because a denylist allowance existed only in the scan
+path, reporting an empty baseline that looked like "nothing exposed".
+
 ## Status
 
 Complete and verified end-to-end offline:

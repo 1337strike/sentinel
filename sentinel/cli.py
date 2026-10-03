@@ -341,6 +341,30 @@ class Context:
             db.confirm_threshold = float(threshold)
         return db
 
+    def enable_dry_run(self) -> None:
+        """Switch the dataset client to fixture replay after construction.
+
+        Needed because ``monitor.yaml`` carries its own ``dry_run`` flag, which
+        is read only after the context exists. Without this, a monitor
+        definition asking for a dry run would silently perform live dataset
+        lookups -- the exact opposite of what it says.
+        """
+        if self.client.dry_run:
+            return
+        self.client.close()
+        self.client = HttpClient.from_config(
+            self.config,
+            dry_run=True,
+            fixture_dir=self.args.fixture_dir,
+            seed=self.args.seed,
+        )
+        log_event(
+            _log,
+            "dry_run_enabled",
+            "dry-run enabled by the monitor definition; no packets or dataset "
+            "requests will be sent",
+        )
+
     def close(self) -> None:
         self.client.close()
 
@@ -348,6 +372,53 @@ class Context:
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
+
+
+def _allow_categories(grant: ActiveGrant | None, dry_run: bool) -> tuple[str, ...]:
+    """Denylist categories permitted for this run.
+
+    Shared by the ``scan`` and ``monitor`` paths. Keeping it in one place is the
+    point: when the dry-run allowance lived only in ``cmd_scan``, a monitor
+    definition replaying the same fixtures discovered zero prefixes and reported
+    an empty baseline, which looks like "nothing exposed" rather than
+    "everything was refused".
+
+    A dry run replays recorded fixtures and opens no socket, so the denylist has
+    nothing to protect. RFC 5737 / RFC 3849 documentation ranges are what
+    fixtures are *supposed* to use, so that one category is permitted rather
+    than requiring every offline replay to carry a scope file authorizing
+    non-routable space.
+    """
+    categories = set(grant.allowed_categories) if grant else set()
+    if dry_run:
+        categories.add("documentation")
+        log_event(
+            _log,
+            "dry_run_documentation_allowed",
+            "dry-run: permitting RFC5737/RFC3849 documentation ranges (no packets are sent)",
+        )
+    return tuple(sorted(categories))
+
+
+def _report_rejections(disc: discovery.DiscoveryResult, context: str) -> None:
+    """Surface denylist rejections on the console.
+
+    An empty result after rejections is indistinguishable from "nothing is
+    exposed" unless the refusals are stated, and that distinction matters more
+    than almost anything else this tool prints.
+    """
+    if disc.rejected:
+        _console.print(
+            f"[yellow]{len(disc.rejected)} target(s) refused by the denylist "
+            f"({context}):[/yellow]"
+        )
+        for target, reason in disc.rejected[:10]:
+            _console.print(f"  · {target}: {reason}")
+    elif not disc.prefixes:
+        _console.print(
+            f"[yellow]Discovery returned no prefixes ({context}); "
+            "this is an empty input, not an all-clear.[/yellow]"
+        )
 
 
 def cmd_scan(ctx: Context) -> int:
@@ -379,20 +450,7 @@ def cmd_scan(ctx: Context) -> int:
         grant = ActiveGrant.from_scope_file(args.scope_file)
 
     mode = ScanMode.ACTIVE if args.active else ScanMode.PASSIVE
-    allow_categories = set(grant.allowed_categories) if grant else set()
-
-    if args.dry_run:
-        # A dry run replays recorded fixtures and opens no socket at all, so the
-        # denylist has nothing to protect here. RFC 5737 documentation ranges are
-        # what fixtures are *supposed* to use, so permit that one category rather
-        # than forcing every offline replay to carry a scope file authorizing
-        # non-routable space.
-        allow_categories.add("documentation")
-        log_event(
-            _log,
-            "dry_run_documentation_allowed",
-            "dry-run: permitting RFC5737/RFC3849 documentation ranges (no packets are sent)",
-        )
+    allow_categories = _allow_categories(grant, bool(args.dry_run))
 
     # -- discovery ----------------------------------------------------------
     if args.asn:
@@ -402,7 +460,7 @@ def cmd_scan(ctx: Context) -> int:
             config,
             expand=args.expand,
             force_expand=args.force_expand,
-            allow_categories=tuple(sorted(allow_categories)),
+            allow_categories=allow_categories,
         )
         target_asn = disc.asn
     else:
@@ -412,14 +470,11 @@ def cmd_scan(ctx: Context) -> int:
             config,
             expand=args.expand or mode is ScanMode.ACTIVE,
             force_expand=args.force_expand,
-            allow_categories=tuple(sorted(allow_categories)),
+            allow_categories=allow_categories,
         )
         target_asn = None
 
-    if disc.rejected:
-        _console.print(f"[yellow]{len(disc.rejected)} target(s) refused by the denylist:[/yellow]")
-        for target, reason in disc.rejected[:10]:
-            _console.print(f"  · {target}: {reason}")
+    _report_rejections(disc, "scan")
 
     if not disc.prefixes:
         _console.print("[red]No authorized target remains after validation.[/red]")
@@ -687,6 +742,8 @@ def cmd_report(ctx: Context) -> int:
 def cmd_monitor(ctx: Context) -> int:
     args = ctx.args
     mon_config = monitor.MonitorConfig.load(args.monitor_config)
+    if mon_config.dry_run:
+        ctx.enable_dry_run()
     db = ctx.signatures()
 
     iterations = 1 if args.once else max(0, int(args.iterations))
@@ -762,9 +819,16 @@ def _monitor_cycle(
             )
         grant = ActiveGrant.from_scope_file(mon_config.scope_file)
 
+    dry_run = bool(mon_config.dry_run or ctx.args.dry_run)
+    allow_categories = _allow_categories(grant, dry_run)
+
     if mon_config.asn:
         disc = discovery.discover_asn(
-            mon_config.asn, ctx.client, config, expand=mon_config.expand_hosts or active
+            mon_config.asn,
+            ctx.client,
+            config,
+            expand=mon_config.expand_hosts or active,
+            allow_categories=allow_categories,
         )
         target_asn = disc.asn
     else:
@@ -772,9 +836,11 @@ def _monitor_cycle(
             read_cidr_file(str(mon_config.cidr_file)),
             config,
             expand=mon_config.expand_hosts or active,
-            allow_categories=tuple(grant.allowed_categories) if grant else (),
+            allow_categories=allow_categories,
         )
         target_asn = None
+
+    _report_rejections(disc, f"monitor cycle {index}")
 
     result = ScanResult(
         target_asn=target_asn,
@@ -791,14 +857,14 @@ def _monitor_cycle(
             ports,
             config,
             requested_rate=mon_config.rate,
-            dry_run=mon_config.dry_run or bool(ctx.args.dry_run),
+            dry_run=dry_run,
         )
         result.hosts = outcome.hosts
     else:
         result.hosts, _ = _passive_port_discovery(ctx, disc, ports)
 
     if result.hosts:
-        if mon_config.dry_run or ctx.args.dry_run:
+        if dry_run:
             result.hosts = fingerprint.fingerprint_from_fixtures(
                 result.hosts, db, config, fixture_dir=ctx.args.fixture_dir
             )

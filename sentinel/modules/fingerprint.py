@@ -306,18 +306,55 @@ class SignatureDB:
         # A weak product match still counts as industrial vocabulary.
         return False, result.score >= self.generic_threshold
 
-    def url_patterns(self, limit: int) -> list[str]:
-        """Distinct probe paths across all signatures, deterministically ordered.
+    def candidate_paths(self, obs: Observation, limit: int) -> list[str]:
+        """Probe paths worth trying against *this* observation, best first.
 
-        Capped per host so that a growing signature database cannot silently
-        turn one host probe into dozens of requests.
+        Candidate-driven rather than database-wide. An earlier version took
+        ``sorted(all_paths)[:limit]``, which probed the alphabetically-first
+        paths in the whole database against every host -- so a REDY controller
+        was asked for ``/CitectSCADA`` and ``/ComfortPoint``, the L5 layer
+        essentially never fired in live runs, and any layer-ablation measurement
+        would have been an artifact of that bug.
+
+        Ranking:
+
+        * rank 0 -- the signature already has a content-layer hit on this
+          observation, so its paths are a confirmation of a live hypothesis;
+        * rank 1 -- the signature claims this port but has no content hit yet.
+
+        A signature with neither contributes nothing, so an ordinary web server
+        with no industrial indicator receives **zero** extra requests. That is
+        both a smaller packet budget and a smaller false-positive surface.
         """
-        seen: list[str] = []
+        ranked: list[tuple[int, str, str]] = []
+
         for signature in self.signatures:
+            if not signature.url_patterns:
+                continue
+            content_hit = (
+                (signature.server_header and _any_in(signature.server_header, obs.server_header))
+                or (signature.title_keywords and _any_in(signature.title_keywords, obs.title_lower))
+                or (signature.js_globals and _any_in_cs(signature.js_globals, obs.body))
+                or (
+                    signature.tls_subject_keywords
+                    and _any_in(signature.tls_subject_keywords, obs.tls_blob)
+                )
+            )
+            if content_hit:
+                rank = 0
+            elif signature.ports and obs.port in signature.ports:
+                rank = 1
+            else:
+                continue
             for pattern in signature.url_patterns:
-                if pattern.startswith("/") and pattern not in seen:
-                    seen.append(pattern)
-        return sorted(seen)[:limit]
+                if pattern.startswith("/"):
+                    ranked.append((rank, signature.vendor, pattern))
+
+        out: list[str] = []
+        for _, _, pattern in sorted(ranked):
+            if pattern not in out:
+                out.append(pattern)
+        return out[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +513,13 @@ async def probe_http(
     port: int,
     config: SentinelConfig,
     scheme: str | None = None,
-    probe_paths: Sequence[str] = (),
 ) -> Observation:
-    """Unauthenticated GET against one endpoint, plus optional path probes."""
+    """Unauthenticated GET against one endpoint's root.
+
+    Deliberately does not probe product paths: choosing *relevant* paths
+    requires the root response first (see :meth:`SignatureDB.candidate_paths`),
+    so that step belongs to the caller.
+    """
     chosen = scheme or ("https" if port in _TLS_PORTS else "http")
     obs = Observation(ip=ip, port=port, scheme=chosen)
     url = f"{chosen}://{_bracket(ip)}:{port}/"
@@ -504,9 +545,7 @@ async def probe_http(
         # once; embedded devices commonly serve HTTP on 8443 and vice versa.
         if scheme is None:
             fallback = "http" if chosen == "https" else "https"
-            return await probe_http(
-                session, ip, port, config, scheme=fallback, probe_paths=probe_paths
-            )
+            return await probe_http(session, ip, port, config, scheme=fallback)
         obs.error = "TLS negotiation failed"
         return obs
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError, UnicodeDecodeError) as exc:
@@ -515,10 +554,6 @@ async def probe_http(
 
     obs.title = _extract_title(obs.body)
     obs.auth_wall = _detect_auth_wall(obs)
-
-    if policy.probe_url_patterns and probe_paths:
-        obs.matched_paths = await _probe_paths(session, chosen, ip, port, probe_paths)
-
     return obs
 
 
@@ -623,22 +658,33 @@ async def fingerprint_host(
 ) -> Host:
     """Probe every open port on ``host`` and fold the evidence into the record."""
     observations: list[Observation] = []
-    probe_paths = db.url_patterns(config.fingerprint.max_url_probes_per_host)
+    policy = config.fingerprint
 
     for port_state in sorted(host.ports, key=lambda p: p.port):
         if port_state.state != "open" or port_state.proto != "tcp":
             continue
         port = port_state.port
+        is_http = (
+            classify_port(port) is PortClass.WEB or port in _TLS_PORTS or _is_probably_http(port)
+        )
         async with semaphore:
             await pacer.wait()
-            if (
-                classify_port(port) is PortClass.WEB
-                or port in _TLS_PORTS
-                or _is_probably_http(port)
-            ):
-                obs = await probe_http(session, host.ip, port, config, probe_paths=probe_paths)
+            if is_http:
+                obs = await probe_http(session, host.ip, port, config)
             else:
                 obs = await probe_tcp_listen(host.ip, port, config)
+
+        # Second pass: confirm the product using its own endpoints. Candidates
+        # are derived from what the root response already suggests, so a host
+        # with no industrial indicator receives no further requests at all.
+        if is_http and obs.status is not None and policy.probe_url_patterns:
+            paths = db.candidate_paths(obs, policy.max_url_probes_per_host)
+            if paths:
+                async with semaphore:
+                    await pacer.wait()
+                    obs.matched_paths = await _probe_paths(
+                        session, obs.scheme, host.ip, port, paths
+                    )
         observations.append(obs)
 
     _fold_observations(host, observations, db)
@@ -775,18 +821,45 @@ async def fingerprint_hosts(
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     out: list[Host] = []
+    failures: list[tuple[str, str]] = []
     for host, result in zip(hosts, results, strict=True):
         if isinstance(result, BaseException):
+            detail = f"{type(result).__name__}: {result}"
+            failures.append((host.ip, detail))
             log_event(
                 _log,
                 "host_probe_failed",
-                f"fingerprinting raised {type(result).__name__}: {result}",
+                f"fingerprinting raised {detail}",
                 target=host.ip,
                 level=40,
             )
+            host.notes.append(f"FINGERPRINTING FAILED: {detail}")
             out.append(host)
         else:
             out.append(result)
+
+    # A per-host failure must not silently become a non-detection. One host
+    # failing is tolerable; a systematic fault (a bad signature file, a coding
+    # error in the probe path) would otherwise present itself as "0% detection
+    # rate" and be written up as a finding instead of a bug. So the failure
+    # count is raised to the caller, and a wholesale failure raises.
+    if failures:
+        log_event(
+            _log,
+            "probe_failures",
+            f"{len(failures)} of {len(hosts)} host(s) failed to fingerprint",
+            level=40,
+            failed_count=len(failures),
+            total=len(hosts),
+            failed=[ip for ip, _ in failures[:20]],
+        )
+        if len(failures) == len(hosts):
+            raise FingerprintError(
+                f"every host ({len(hosts)}) failed to fingerprint; first error: "
+                f"{failures[0][1]}. This is a systematic fault, not an absence of "
+                "findings -- refusing to report it as a clean result."
+            )
+
     return out
 
 
