@@ -1,0 +1,683 @@
+# ===========================================================================
+# Sentinel ICS/SCADA fingerprint database
+# ===========================================================================
+#
+# SCHEMA (per entry)
+#   vendor                 str   Product/family label reported in output.
+#   ports                  [int] Ports the product is conventionally served on.
+#                                Port affinity alone NEVER identifies a product;
+#                                it only reinforces a content-layer match.
+#   server_header          [str] Substrings matched case-insensitively against
+#                                the HTTP `Server` response header.      (L1)
+#   tls_subject_keywords   [str] Substrings matched against the TLS certificate
+#                                subject and issuer DN.                   (L2)
+#   title_keywords         [str] Substrings matched against <title>.       (L3)
+#   js_globals             [str] Case-SENSITIVE substrings matched against the
+#                                response body; JavaScript identifiers are
+#                                case-significant.                        (L4)
+#   url_patterns           [str] Product-specific paths. Probed with GET only.  (L5)
+#   default_cred_risk      bool  Product family is documented as shipping
+#                                default credentials. Sentinel NEVER tests them;
+#                                this only raises the remediation priority.
+#   cves                   [str] Indicative CVE references -- see caveat below.
+#   mitre_ics              [str] MITRE ATT&CK for ICS technique IDs that
+#                                Internet exposure of this asset enables.
+#   generic                bool  Entry matches industrial *vocabulary* rather
+#                                than a product. Can never yield a confirmed-ICS
+#                                verdict; caps at MEDIUM risk.
+#   notes                  str   Analyst context.
+#
+# ---------------------------------------------------------------------------
+# CAVEAT ON CVE REFERENCES  (important for anyone citing this file)
+# ---------------------------------------------------------------------------
+# The `cves` lists are TRIAGE POINTERS, not version-matched vulnerability
+# assertions. Sentinel does not read firmware versions, does not authenticate,
+# and does not probe for vulnerable behaviour -- so it cannot and does not claim
+# that a matched host is affected by a listed CVE. The lists answer "what has
+# historically been reported against this product family, so an analyst knows
+# where to look", and `modules/risk.py` phrases the remediation accordingly.
+#
+# Entries are left EMPTY where no well-established public reference was
+# confidently available, rather than being filled speculatively. An empty list
+# means "not populated", never "no known issues". Verify every reference against
+# the vendor advisory and the CISA ICS advisory database before citing it in a
+# report or a paper.
+# ---------------------------------------------------------------------------
+
+version: 1
+
+matching:
+  # Layer weights. Normalised by their sum, so these are relative importances
+  # rather than absolute scores. The `Server` header is weighted highest because
+  # embedded industrial HTTP stacks rarely disguise it; port affinity is weighted
+  # lowest because it is the weakest possible evidence.
+  weights:
+    server_header: 0.35
+    tls_subject: 0.15
+    title: 0.25
+    js_globals: 0.15
+    url_pattern: 0.15
+    port_affinity: 0.05
+
+  # Score at or above which a non-generic match counts as CONFIRMED ICS.
+  # Experiment E1 sweeps this value to produce the detection ROC curve; the
+  # default is the operating point reported in the paper.
+  confirm_threshold: 0.45
+
+  # Score at or above which a generic/weak match counts as industrial
+  # vocabulary (MEDIUM risk, "candidate" rather than "confirmed").
+  generic_threshold: 0.20
+
+signatures:
+
+  # =========================================================================
+  # Building management / energy data controllers
+  # =========================================================================
+
+  - vendor: REDY-Process
+    ports: [9000, 80, 8080]
+    server_header:
+      - "redy"
+      - "lighttpd/1.4"      # weak alone; combines with title/JS layers
+    title_keywords:
+      - "redy"
+      - "redy-process"
+      - "energiemanagement"
+      - "energy monitoring"
+    js_globals:
+      - "redyApp"
+      - "REDY_CONFIG"
+      - "redyProcess"
+    url_patterns:
+      - "/redy"
+      - "/cgi-bin/redy"
+      - "/process/overview"
+      - "/api/datapoints"
+    default_cred_risk: true
+    cves: []
+    mitre_ics:
+      - "T0883"   # Internet Accessible Device
+      - "T0861"   # Point & Tag Identification
+      - "T0801"   # Monitor Process State
+    notes: >
+      Building-management and energy-data acquisition controller with a web UI
+      conventionally on TCP/9000. Datapoint endpoints frequently enumerate tag
+      names and live process values before any authentication, which is the
+      canonical pre-authentication disclosure case this tool was built to find.
+
+  - vendor: Niagara/Tridium
+    ports: [80, 443, 1911, 4911, 8080, 8443]
+    server_header:
+      - "niagara"
+      - "niagara web server"
+    tls_subject_keywords:
+      - "niagara"
+      - "tridium"
+    title_keywords:
+      - "niagara"
+      - "tridium"
+      - "station"
+      - "jace"
+      - "workbench"
+    js_globals:
+      - "niagaraVersion"
+      - "BajaScript"
+      - "bajaux"
+      - "NiagaraSystem"
+    url_patterns:
+      - "/login"
+      - "/ord"
+      - "/prelogin"
+      - "/niagara"
+      - "/wb"
+    default_cred_risk: true
+    cves:
+      - "CVE-2012-4701"
+      - "CVE-2017-16744"
+    mitre_ics:
+      - "T0883"
+      - "T0822"   # External Remote Services
+      - "T0861"
+      - "T0831"   # Manipulation of Control
+    notes: >
+      Niagara Framework controllers (JACE hardware and software stations). Fox
+      protocol on TCP/1911 and 4911; web UI on 80/443/8080/8443. The /prelogin
+      endpoint has historically disclosed station identity and version before
+      authentication.
+
+  # =========================================================================
+  # SCADA / HMI platforms
+  # =========================================================================
+
+  - vendor: Inductive Automation Ignition
+    ports: [8088, 8043, 8060, 80, 443, 8080]
+    server_header:
+      - "ignition"
+      - "jetty"           # weak alone; requires a content-layer match
+    tls_subject_keywords:
+      - "ignition"
+      - "inductive automation"
+    title_keywords:
+      - "ignition"
+      - "ignition gateway"
+      - "inductive automation"
+      - "perspective"
+      - "vision client"
+    js_globals:
+      - "IgnitionGateway"
+      - "ignitionVersion"
+      - "perspectiveClient"
+      - "com.inductiveautomation"
+    url_patterns:
+      - "/main/web/status"
+      - "/main/web/config"
+      - "/data/perspective"
+      - "/system/gateway"
+      - "/main/StatusPing"
+    default_cred_risk: true
+    cves:
+      - "CVE-2020-10644"
+      - "CVE-2020-12004"
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0861"
+      - "T0802"   # Automated Collection
+    notes: >
+      Ignition gateway. The status endpoint commonly reveals gateway name,
+      version, edition, and project list without authentication, which is enough
+      to plan an attack path even when the project itself is protected.
+
+  - vendor: WonderWare/AVEVA
+    ports: [80, 443, 8080, 8443]
+    server_header:
+      - "wonderware"
+      - "aveva"
+      - "archestra"
+    tls_subject_keywords:
+      - "wonderware"
+      - "aveva"
+    title_keywords:
+      - "wonderware"
+      - "aveva"
+      - "intouch"
+      - "system platform"
+      - "archestra"
+      - "insight"
+    js_globals:
+      - "WWSuiteLink"
+      - "ArchestrA"
+      - "InTouchAccess"
+      - "avevaInsight"
+    url_patterns:
+      - "/InTouch"
+      - "/AVEVA"
+      - "/Wonderware"
+      - "/SuiteLink"
+      - "/HistorianClient"
+    default_cred_risk: true
+    cves:
+      - "CVE-2020-13496"
+      - "CVE-2020-13497"
+      - "CVE-2022-23854"
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0861"
+      - "T0836"   # Modify Parameter
+    notes: >
+      InTouch / System Platform / Insight (formerly Wonderware). Historian and
+      InTouch Access Anywhere web gateways are the components most often found
+      Internet-facing.
+
+  - vendor: FactoryTalk
+    ports: [80, 443, 8080, 2222, 44818]
+    server_header:
+      - "factorytalk"
+      - "rockwell"
+      - "allen-bradley"
+    tls_subject_keywords:
+      - "rockwell"
+      - "factorytalk"
+      - "allen-bradley"
+    title_keywords:
+      - "factorytalk"
+      - "rockwell automation"
+      - "allen-bradley"
+      - "view se"
+      - "view me"
+      - "studio 5000"
+    js_globals:
+      - "FTViewSE"
+      - "FactoryTalkClient"
+      - "RSLinx"
+      - "rockwellAutomation"
+    url_patterns:
+      - "/FTVPanelView"
+      - "/FactoryTalk"
+      - "/RSLinx"
+      - "/rokform"
+      - "/FTViewSE"
+    default_cred_risk: true
+    cves:
+      - "CVE-2022-1161"
+      - "CVE-2023-2071"
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0855"   # Unauthorized Command Message
+      - "T0885"   # Commonly Used Port
+    notes: >
+      FactoryTalk View SE/ME and associated Rockwell components. EtherNet/IP on
+      TCP/44818 and UDP/2222 frequently accompanies the web interface; the
+      combination is a strong indicator even when the web layer is generic.
+
+  - vendor: Citect
+    ports: [80, 443, 8080, 2082, 20000]
+    server_header:
+      - "citect"
+      - "citectscada"
+    title_keywords:
+      - "citect"
+      - "citectscada"
+      - "plant scada"
+      - "vijeo citect"
+    js_globals:
+      - "CitectSCADA"
+      - "citectWeb"
+      - "CtApi"
+    url_patterns:
+      - "/CitectSCADA"
+      - "/WebClient"
+      - "/Citect"
+    default_cred_risk: true
+    cves:
+      - "CVE-2008-2639"
+      - "CVE-2018-7813"
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0861"
+    notes: >
+      CitectSCADA / Plant SCADA / Vijeo Citect. The web client component is the
+      usual Internet-facing surface.
+
+  - vendor: GE iFIX
+    ports: [80, 443, 8080, 18245, 18246]
+    server_header:
+      - "ifix"
+      - "proficy"
+      - "cimplicity"
+    tls_subject_keywords:
+      - "proficy"
+      - "ifix"
+    title_keywords:
+      - "ifix"
+      - "proficy"
+      - "cimplicity"
+      - "webspace"
+      - "ge digital"
+      - "ge intelligent platforms"
+    js_globals:
+      - "iFixWebSpace"
+      - "ProficyClient"
+      - "CimplicityView"
+    url_patterns:
+      - "/iFIX"
+      - "/Proficy"
+      - "/Webspace"
+      - "/CimplicityHMI"
+    default_cred_risk: true
+    cves:
+      - "CVE-2014-0750"
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0861"
+      - "T0845"   # Program Upload
+    notes: >
+      iFIX / Proficy / CIMPLICITY family. CVE-2014-0750 (CIMPLICITY directory
+      traversal) is of historical note as a vulnerability exploited in the wild
+      against Internet-facing HMIs, which is precisely the exposure class this
+      tool measures.
+
+  - vendor: ABB
+    ports: [80, 443, 8080, 8443]
+    server_header:
+      - "abb"
+      - "abb webserver"
+    tls_subject_keywords:
+      - "abb"
+    title_keywords:
+      - "abb"
+      - "800xa"
+      - "ac500"
+      - "freelance"
+      - "abb automation"
+      - "cylon"
+    js_globals:
+      - "ABBWebUI"
+      - "abb800xA"
+      - "AC500Web"
+    url_patterns:
+      - "/abb"
+      - "/800xA"
+      - "/webvisu"
+      - "/plc/webvisu.htm"
+    default_cred_risk: true
+    cves: []
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0831"
+    notes: >
+      ABB automation web interfaces (800xA operator clients, AC500 PLC web
+      server, building-automation controllers). AC500 commonly serves a CODESYS
+      WebVisu application, so a WebVisu match on ABB hardware is expected.
+
+  - vendor: Honeywell
+    ports: [80, 443, 8080, 8443, 502]
+    server_header:
+      - "honeywell"
+      - "experion"
+      - "tridium"          # Honeywell building controllers embed Niagara
+    tls_subject_keywords:
+      - "honeywell"
+    title_keywords:
+      - "honeywell"
+      - "experion"
+      - "spyder"
+      - "webvision"
+      - "comfortpoint"
+      - "niagara"
+    js_globals:
+      - "HoneywellWeb"
+      - "ExperionClient"
+      - "WEBvision"
+    url_patterns:
+      - "/honeywell"
+      - "/experion"
+      - "/webvision"
+      - "/ComfortPoint"
+    default_cred_risk: true
+    cves: []
+    mitre_ics:
+      - "T0883"
+      - "T0822"
+      - "T0861"
+    notes: >
+      Experion PKS operator interfaces and Honeywell building controllers. Some
+      building products embed the Niagara framework, so a Niagara indicator does
+      not exclude a Honeywell asset -- expect legitimate overlap between these
+      two signatures and treat the runner-up match as meaningful.
+
+  # =========================================================================
+  # Controller / PLC families (identified via embedded web UI only)
+  # =========================================================================
+
+  - vendor: Siemens S7
+    ports: [102, 80, 443, 8080, 161]
+    server_header:
+      - "simatic"
+      - "siemens"
+      - "s7-"
+      - "goahead-webs"      # weak alone; common on SIMATIC CPs
+    tls_subject_keywords:
+      - "siemens"
+      - "simatic"
+    title_keywords:
+      - "simatic"
+      - "siemens"
+      - "s7-1200"
+      - "s7-1500"
+      - "s7-300"
+      - "s7-400"
+      - "cp 343"
+      - "web server simatic"
+      - "wincc"
+    js_globals:
+      - "SimaticWebApp"
+      - "s7WebServer"
+      - "MiniWebLib"
+    url_patterns:
+      - "/Portal/Portal.mwsl"
+      - "/basic/index.html"
+      - "/awp"
+      - "/FileBrowser"
+      - "/DataLogs"
+    default_cred_risk: true
+    cves:
+      - "CVE-2016-9158"
+      - "CVE-2019-6568"
+      - "CVE-2019-10923"
+    mitre_ics:
+      - "T0883"
+      - "T0869"   # Standard Application Layer Protocol
+      - "T0846"   # Remote System Discovery
+      - "T0845"
+    notes: >
+      S7-1200/1500 CPUs expose a web server whose Portal.mwsl endpoint reveals
+      station name, module type and firmware. ISO-TSAP on TCP/102 is the control
+      protocol. NOTE: Sentinel never sends an S7 COTP/TPKT frame, so a TCP/102
+      finding is "a service is listening on the S7 port" and not a confirmed S7
+      CPU -- see docs/ARCHITECTURE.md on the zero-payload constraint.
+
+  - vendor: Schneider Modicon
+    ports: [80, 443, 502, 8080]
+    server_header:
+      - "schneider"
+      - "modicon"
+      - "basic/web"
+      - "schneider-electric"
+    tls_subject_keywords:
+      - "schneider"
+      - "modicon"
+    title_keywords:
+      - "schneider electric"
+      - "modicon"
+      - "m221"
+      - "m241"
+      - "m251"
+      - "m340"
+      - "m580"
+      - "bmx"
+      - "web designer"
+      - "factorycast"
+    js_globals:
+      - "FactoryCast"
+      - "ModiconWeb"
+      - "SchneiderWebDesigner"
+    url_patterns:
+      - "/FactoryCast"
+      - "/secure/embedded/default.htm"
+      - "/rde"
+      - "/ws/rpc"
+    default_cred_risk: true
+    cves:
+      - "CVE-2018-7811"
+      - "CVE-2021-22779"
+    mitre_ics:
+      - "T0883"
+      - "T0855"
+      - "T0836"
+      - "T0869"
+    notes: >
+      Modicon M-series PLCs with the FactoryCast embedded web server. Modbus/TCP
+      on 502 has no authentication or integrity protection by design, so
+      Internet exposure of that port is equivalent to unauthenticated process
+      control.
+
+  # =========================================================================
+  # Protocol-level and framework indicators
+  # =========================================================================
+
+  - vendor: CODESYS WebVisu
+    ports: [8080, 80, 443, 1217, 11740]
+    server_header:
+      - "codesys"
+      - "3s-smart"
+    title_keywords:
+      - "codesys"
+      - "webvisu"
+      - "visualization"
+    js_globals:
+      - "webvisu"
+      - "CODESYS"
+      - "WebVisuServlet"
+    url_patterns:
+      - "/webvisu.htm"
+      - "/plc/webvisu.htm"
+      - "/webvisu/visu"
+    default_cred_risk: true
+    cves: []
+    mitre_ics:
+      - "T0883"
+      - "T0831"
+      - "T0836"
+    notes: >
+      CODESYS runtime WebVisu. Vendor-neutral: dozens of OEMs ship it, so a
+      WebVisu match identifies the runtime rather than the hardware vendor. The
+      visualisation itself routinely exposes live process graphics without
+      authentication.
+
+  - vendor: OPC-UA Endpoint
+    ports: [4840, 4843, 48010, 53530]
+    server_header: []
+    title_keywords:
+      - "opc ua"
+      - "opc-ua"
+      - "opcua server"
+    js_globals: []
+    url_patterns: []
+    default_cred_risk: false
+    cves: []
+    mitre_ics:
+      - "T0883"
+      - "T0869"
+      - "T0861"
+    notes: >
+      OPC-UA binary endpoint. Sentinel sends no OPC-UA Hello message, so this
+      entry matches only on port affinity plus any volunteered banner; treat it
+      as a candidate. Anonymous OPC-UA sessions, where permitted by the server,
+      allow full address-space browsing -- but confirming that would require a
+      protocol handshake, which this methodology excludes.
+
+  # =========================================================================
+  # Generic industrial vocabulary  (capped at MEDIUM -- never "confirmed")
+  # =========================================================================
+
+  - vendor: Generic HMI
+    generic: true
+    ports: [80, 443, 8080, 8443, 9000]
+    server_header: []
+    title_keywords:
+      - "hmi"
+      - "human machine interface"
+      - "operator panel"
+      - "operator interface"
+      - "panel view"
+      - "touch panel"
+    js_globals:
+      - "hmiConfig"
+      - "HmiRuntime"
+    url_patterns:
+      - "/hmi"
+      - "/panel"
+    default_cred_risk: false
+    cves: []
+    mitre_ics: ["T0883"]
+    notes: >
+      Industrial vocabulary without product identification. Yields MEDIUM at
+      most: "the page says HMI" is a lead to investigate, not an identification.
+
+  - vendor: Generic SCADA
+    generic: true
+    ports: [80, 443, 8080, 8443]
+    server_header: []
+    title_keywords:
+      - "scada"
+      - "supervisory control"
+      - "telemetry"
+      - "rtu"
+      - "remote terminal unit"
+      - "process control"
+      - "plant overview"
+      - "mimic"
+    js_globals:
+      - "scadaConfig"
+      - "ScadaClient"
+    url_patterns:
+      - "/scada"
+      - "/mimic"
+      - "/overview"
+    default_cred_risk: false
+    cves: []
+    mitre_ics: ["T0883", "T0801"]
+    notes: Generic SCADA vocabulary. MEDIUM ceiling.
+
+  - vendor: Generic BMS
+    generic: true
+    ports: [80, 443, 8080, 9000, 47808]
+    server_header: []
+    title_keywords:
+      - "bms"
+      - "building management"
+      - "building automation"
+      - "hvac"
+      - "chiller"
+      - "boiler"
+      - "air handling"
+      - "ahu"
+      - "energy management"
+      - "bacnet"
+    js_globals:
+      - "bmsApp"
+      - "BacnetClient"
+    url_patterns:
+      - "/bms"
+      - "/hvac"
+      - "/bacnet"
+    default_cred_risk: false
+    cves: []
+    mitre_ics: ["T0883", "T0861"]
+    notes: >
+      Building management vocabulary, including BACnet/IP on UDP/47808. Building
+      controllers are the most commonly Internet-exposed OT class and the most
+      commonly unowned at the organisational level.
+
+  - vendor: Generic DCS
+    generic: true
+    ports: [80, 443, 8080, 8443]
+    server_header: []
+    title_keywords:
+      - "dcs"
+      - "distributed control"
+      - "control room"
+      - "process station"
+      - "batch control"
+      - "operator station"
+    js_globals: []
+    url_patterns:
+      - "/dcs"
+      - "/controlroom"
+    default_cred_risk: false
+    cves: []
+    mitre_ics: ["T0883", "T0831"]
+    notes: Generic DCS vocabulary. MEDIUM ceiling.
+
+  - vendor: Generic Industrial Protocol Port
+    generic: true
+    ports: [102, 502, 1911, 2222, 4840, 20000, 44818, 47808]
+    server_header: []
+    title_keywords: []
+    js_globals: []
+    url_patterns: []
+    default_cred_risk: false
+    cves: []
+    mitre_ics: ["T0883", "T0869", "T0885"]
+    notes: >
+      Fallback for a listening industrial protocol port with no content layer to
+      match. Scores on port affinity alone, which the matcher requires a content
+      hit to activate -- so in practice this entry documents the port set and the
+      MEDIUM verdict is driven by risk.py's `ot_protocol_exposed` refinement
+      rather than by a signature match.

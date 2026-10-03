@@ -1,0 +1,29 @@
+HTTP/1.1 200 OK
+Server: nginx/1.25.3
+Content-Type: text/html; charset=utf-8
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Industrial Services - Process Engineering Consultancy</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:2rem;color:#111;background:#fff}
+table{border-collapse:collapse;margin:1rem 0}
+th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}
+h1{font-size:1.3rem} label{display:block;margin:.4rem 0}
+</style>
+</head>
+<body>
+<!-- LAB SIMULATOR. Hand-authored from public product documentation for the
+     Sentinel testbed. Not derived from signatures.yaml: generating targets
+     from the detector's own patterns would make detection measurement
+     circular. Layers deliberately present here: NONE - non-ICS control -->
+<h1>Process Engineering Consultancy</h1>
+<p>We deliver plant control system integration, SCADA migration planning and
+HMI usability audits for industrial clients. Our engineers hold IEC 62443
+certifications.</p>
+<p>Services: process optimisation &middot; control system design &middot;
+building management commissioning</p>
+</body>
+</html>

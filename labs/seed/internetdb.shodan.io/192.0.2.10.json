@@ -1,0 +1,18 @@
+{
+  "ip": "192.0.2.10",
+  "ports": [
+    80,
+    443,
+    9000
+  ],
+  "tags": [
+    "ics"
+  ],
+  "cpes": [
+    "cpe:/a:example:bms_controller:2.4.1"
+  ],
+  "vulns": [],
+  "hostnames": [
+    "bms-01.example.net"
+  ]
+}

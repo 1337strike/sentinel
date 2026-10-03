@@ -1,0 +1,4 @@
+# Lab target ranges for the isolated KVM testbed.
+# Copy to lab.txt (gitignored) and edit for your bridge.
+# Must also be listed in your scope file for --active to be permitted.
+10.99.0.0/24

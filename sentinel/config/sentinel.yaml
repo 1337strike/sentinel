@@ -1,0 +1,182 @@
+# ===========================================================================
+# Sentinel runtime configuration
+# ===========================================================================
+#
+# Resolution order: --config <path>  ->  ./config/sentinel.yaml  ->
+# ./sentinel.yaml  ->  packaged sentinel/config/sentinel.yaml
+#
+# Unknown keys are a hard error, not a warning. A silently-ignored `ot_pps`
+# typo is exactly the failure that would let a study exceed its packet budget
+# without anyone noticing, so the loader refuses to start instead.
+#
+# THERE ARE NO CREDENTIAL FIELDS IN THIS FILE, and none can be added: every
+# endpoint Sentinel contacts is anonymous. See docs/CREDENTIALS.md and
+# credential_policy.yaml.
+# ===========================================================================
+
+log_level: INFO
+signatures_path: signatures.yaml
+
+# ---------------------------------------------------------------------------
+# Rate limits -- a SAFETY control, not a courtesy one
+# ---------------------------------------------------------------------------
+# Legacy PLCs and building controllers have been documented to fault, drop
+# their scan cycle, or fail closed under modest probe pressure. A study that
+# bricks a building controller has done more harm than the exposure it
+# measured.
+#
+# Ports are classified OT / web / other, and a target set containing ANY OT
+# port is governed by the OT ceiling -- the most restrictive class present
+# wins. The CLI's --rate can only LOWER the effective rate; min(requested,
+# ceiling) is applied in config/loader.py and cannot be overridden upward.
+# ---------------------------------------------------------------------------
+rate_limits:
+  ot_pps: 100       # industrial protocol + embedded-device ports
+  web_pps: 1000     # general-purpose HTTP stacks
+  other_pps: 100    # unclassified: assume fragile
+
+# ---------------------------------------------------------------------------
+# Timeouts (seconds). Every outbound call is bounded; none may be unlimited.
+# ---------------------------------------------------------------------------
+timeouts:
+  connect: 5.0
+  read: 8.0
+  total: 15.0
+  tls_handshake: 6.0
+  dns: 3.0
+  subprocess: 1800.0    # masscan ceiling for a large authorized range
+
+# ---------------------------------------------------------------------------
+# Retry policy: exponential backoff with full jitter.
+# Jitter is seeded from --seed so retry timing stays reproducible (E4).
+# ---------------------------------------------------------------------------
+retry:
+  attempts: 3
+  backoff_base: 0.5
+  backoff_max: 8.0
+  jitter: true
+  retry_on_status: [429, 500, 502, 503, 504]
+
+# ---------------------------------------------------------------------------
+# Passive expansion bounds
+# ---------------------------------------------------------------------------
+# Passive mode sends nothing to targets, but it does query free public
+# datasets. Expanding a /16 to every address would be 65,536 requests to that
+# infrastructure per run -- not sustainable and not defensible in an ethics
+# section. Expansion is therefore opt-in (--expand) and capped, and truncation
+# is REPORTED rather than silently sampled so the evaluation can state what
+# fraction of a prefix was examined.
+# ---------------------------------------------------------------------------
+passive:
+  expand_hosts: false
+  max_hosts: 1024
+  min_expand_prefix_v4: 20   # refuse broader than /20 without --force-expand
+  request_delay: 0.1         # >= 100 ms between dataset requests
+  dataset_concurrency: 4
+  include_ipv6: false
+
+# ---------------------------------------------------------------------------
+# Fingerprinting
+# ---------------------------------------------------------------------------
+fingerprint:
+  concurrency: 50
+  max_body_bytes: 65536
+  max_banner_bytes: 2048
+  follow_redirects: true
+  max_redirects: 3
+
+  # TLS verification is OFF because effectively every ICS device presents a
+  # self-signed certificate; refusing the handshake would make the TLS
+  # fingerprinting layer useless and would under-report exposure. The
+  # certificate is treated strictly as EVIDENCE TO RECORD, never as a basis
+  # for trust, and nothing confidential is ever sent over these connections.
+  verify_tls: false
+  collect_tls_metadata: true
+
+  # URL path probing is GET-only. Capped per host so that a growing signature
+  # database cannot silently turn one host probe into dozens of requests.
+  probe_url_patterns: true
+  max_url_probes_per_host: 6
+
+# ---------------------------------------------------------------------------
+# masscan (external dependency -- not bundled; see docs/REPRODUCE.md)
+# ---------------------------------------------------------------------------
+scanner:
+  binary: masscan
+  wait_seconds: 3
+  retries: 0
+
+  # masscan's own banner grabbing WRITES protocol probe data to elicit a
+  # response, which can fault legacy controllers. Sentinel refuses to enable
+  # this whenever an OT port is in range; banners are collected instead by the
+  # fingerprint stage, which only ever LISTENS on industrial ports.
+  banners: false
+
+  # Arguments appended verbatim. Options that would override targets, ports,
+  # rate, exclusions, or output are rejected by scanner.validate_extra_args().
+  extra_args: []
+
+# ---------------------------------------------------------------------------
+# Anonymous dataset endpoints -- every one is keyless and account-free.
+# Cross-checked at call time against credential_policy.yaml.
+# ---------------------------------------------------------------------------
+endpoints:
+  ripestat_announced_prefixes: "https://stat.ripe.net/data/announced-prefixes/data.json"
+  ripestat_network_info: "https://stat.ripe.net/data/network-info/data.json"
+  ripestat_as_overview: "https://stat.ripe.net/data/as-overview/data.json"
+
+  # Free, keyless per-IP dataset. NOT the Shodan REST API, which requires a
+  # key and is therefore unusable under the zero-credential constraint.
+  shodan_internetdb: "https://internetdb.shodan.io"
+
+  # RIR delegated-extended files: plain text, anonymous. Source of country,
+  # registry, and allocation status. They carry opaque organisation HANDLES,
+  # not organisation names -- name attribution comes from WHOIS/RDAP.
+  rir_delegations:
+    ripencc: "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest"
+    arin: "https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest"
+    apnic: "https://ftp.apnic.net/stats/apnic/delegated-apnic-extended-latest"
+    lacnic: "https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest"
+    afrinic: "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest"
+
+  # Queried only when the local `whois` binary is absent. Same registry data
+  # over HTTPS/JSON, operated by the RIRs themselves: anonymous and keyless.
+  rdap:
+    ripencc: "https://rdap.db.ripe.net"
+    arin: "https://rdap.arin.net/registry"
+    apnic: "https://rdap.apnic.net"
+    lacnic: "https://rdap.lacnic.net/rdap"
+    afrinic: "https://rdap.afrinic.net/rdap"
+
+# ---------------------------------------------------------------------------
+# Output locations. The audit log is append-only and hash-chained; see
+# docs/REPRODUCE.md for setting the filesystem append-only attribute on it.
+# ---------------------------------------------------------------------------
+paths:
+  output_dir: out
+  runs_dir: out/runs
+  report_dir: out/reports
+  log_file: logs/sentinel.jsonl
+  audit_log: audit/sentinel-audit.jsonl
+  cache_dir: labs/seed/cache
+
+# ---------------------------------------------------------------------------
+# Port presets. Built-ins (web, ics, ot, full) may be overridden here, and
+# additional named presets may be added.
+#
+# ICS ports of interest:
+#   9000  REDY-Process / BMS web UI     102    Siemens S7 (ISO-TSAP)
+#   80    HTTP                          502    Modbus/TCP
+#   443   HTTPS                         20000  DNP3
+#   8080  HTTP alt                      44818  EtherNet/IP (TCP)
+#   8443  HTTPS alt                     4840   OPC-UA binary
+#   1911  Niagara Fox                   2222   EtherNet/IP (UDP I/O)
+#   161   SNMP
+# ---------------------------------------------------------------------------
+port_presets:
+  ics: [80, 102, 161, 443, 502, 1911, 2222, 4840, 8080, 8443, 9000, 20000, 44818]
+  web: [80, 443, 8000, 8008, 8080, 8443, 8888]
+
+  # The lab preset covers exactly the services labs/docker/docker-compose.yml
+  # starts, including the non-ICS false-positive controls.
+  lab: [22, 80, 102, 502, 1911, 4840, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 9000]

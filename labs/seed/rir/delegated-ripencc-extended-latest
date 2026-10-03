@@ -1,0 +1,5 @@
+2|ripencc|1767225600|125000|19830705|20260101|+0100
+ripencc|*|ipv4|*|65536|summary
+ripencc|NL|ipv4|192.0.2.0|256|20260101|assigned|ff00000000000000|e-stats
+ripencc|DE|ipv4|198.51.100.0|256|20260101|allocated|ff00000000000001|e-stats
+ripencc|NL|ipv4|203.0.113.0|256|20260101|reserved|ff00000000000002|e-stats

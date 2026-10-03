@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>REDY-Process :: Energiemanagement Anlage 1</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:2rem;color:#111;background:#fff}
+table{border-collapse:collapse;margin:1rem 0}
+th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}
+h1{font-size:1.3rem} label{display:block;margin:.4rem 0}
+</style>
+</head>
+<body>
+<!-- LAB SIMULATOR. Hand-authored from public product documentation for the
+     Sentinel testbed. Not derived from signatures.yaml: generating targets
+     from the detector's own patterns would make detection measurement
+     circular. Layers deliberately present here: L1 server_header, L3 title, L4 js_globals -->
+<h1>REDY-Process Anlagenuebersicht</h1>
+<p>Station: Anlage 1 &middot; Firmware 2.4.1 &middot; Letztes Update: 04:15</p>
+<table>
+<tr><th>Datenpunkt</th><th>Wert</th><th>Einheit</th></tr>
+<tr><td>AHU_01.SupplyTemp</td><td>21.4</td><td>&deg;C</td></tr>
+<tr><td>AHU_01.ReturnTemp</td><td>23.1</td><td>&deg;C</td></tr>
+<tr><td>CHILLER.Status</td><td>RUN</td><td>-</td></tr>
+<tr><td>METER.TotalEnergy</td><td>184522.6</td><td>kWh</td></tr>
+</table>
+<script>
+var redyApp = { station: "Anlage 1", version: "2.4.1", datapoints: 412 };
+var REDY_CONFIG = { pollInterval: 5000, endpoint: "/api/datapoints" };
+</script>
+</body>
+</html>

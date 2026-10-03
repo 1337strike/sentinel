@@ -1,0 +1,13 @@
+{
+  "ip": "192.0.2.12",
+  "ports": [
+    22,
+    80
+  ],
+  "tags": [],
+  "cpes": [],
+  "vulns": [],
+  "hostnames": [
+    "web.example.net"
+  ]
+}

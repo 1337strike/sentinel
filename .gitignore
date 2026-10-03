@@ -1,0 +1,43 @@
+# Environments
+.venv/
+venv/
+env/
+.python-version
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Sentinel runtime output -- never commit scan data or audit trails
+out/
+output/
+runs/
+*.scan.json
+*.fp.json
+*.enriched.json
+audit/
+logs/
+*.audit.jsonl
+*.log
+
+# Operator-specific authorization material -- MUST NOT be committed
+scope.yaml
+scope.local.yaml
+lab.txt
+*.scope.yaml
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Downloaded RIR delegation files (multi-MB, regenerated on demand)
+labs/seed/cache/

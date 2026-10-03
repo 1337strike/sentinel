@@ -1,0 +1,32 @@
+{
+  "objectClassName": "ip network",
+  "handle": "192.0.2.0 - 192.0.2.255",
+  "name": "EXAMPLE-DOC-NET",
+  "country": "NL",
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "ORG-EXAMPLE1-RIPE",
+      "roles": [
+        "registrant"
+      ],
+      "vcardArray": [
+        "vcard",
+        [
+          [
+            "version",
+            {},
+            "text",
+            "4.0"
+          ],
+          [
+            "fn",
+            {},
+            "text",
+            "Example Documentation Org"
+          ]
+        ]
+      ]
+    }
+  ]
+}

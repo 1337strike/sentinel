@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!--
+  Content-Security-Policy is restrictive on purpose. Every banner, title and
+  certificate string below was read off a remote device and is untrusted input.
+  Jinja2 autoescaping is the primary defence; this header is the second one, so
+  that a payload surviving escaping still cannot execute or call home.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Sentinel Exposure Report &mdash; {{ result.scan_time }}</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #16191d; --muted: #5b6471; --line: #d8dde5;
+    --panel: #f6f8fa;
+    --critical: #8b0000; --high: #c1440e; --medium: #a37200;
+    --low: #2b6cb0; --info: #5b6471;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a; --fg: #e8eaed; --muted: #9aa4b2; --line: #2c3238;
+      --panel: #1c2024;
+      --critical: #ff6b6b; --high: #ff9f45; --medium: #ffd166;
+      --low: #7cb6f0; --info: #9aa4b2;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 68rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.15rem; margin: 2.5rem 0 .75rem; padding-bottom: .35rem;
+       border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 2rem 0 .5rem; font-family: ui-monospace, monospace; }
+  p.sub { color: var(--muted); margin: 0 0 1.5rem; }
+  table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; font-size: .92rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .8rem;
+       text-transform: uppercase; letter-spacing: .04em; }
+  td.k { width: 14rem; color: var(--muted); }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em;
+                word-break: break-all; }
+  .notice { background: var(--panel); border-left: 3px solid var(--low);
+            padding: .85rem 1rem; margin: 1.25rem 0; border-radius: 0 4px 4px 0; }
+  .cards { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0 1.5rem; }
+  .card { flex: 1 1 7rem; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 6px; padding: .7rem .85rem; }
+  .card .n { font-size: 1.5rem; font-weight: 600; display: block; line-height: 1.2; }
+  .card .l { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
+             color: var(--muted); }
+  .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px;
+          font-size: .72rem; font-weight: 700; letter-spacing: .04em; color: #fff; }
+  .CRITICAL { background: var(--critical); } .HIGH { background: var(--high); }
+  .MEDIUM { background: var(--medium); color: #16191d; } .LOW { background: var(--low); }
+  .INFO { background: var(--info); }
+  .yes { color: var(--critical); font-weight: 700; }
+  ul, ol { margin: .4rem 0 1rem; padding-left: 1.4rem; }
+  li { margin: .2rem 0; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: .85rem; }
+  @media (max-width: 40rem) { body { padding: 1rem .75rem; } td.k { width: auto; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Sentinel ICS/SCADA Exposure Report</h1>
+<p class="sub">
+  {{ result.mode.value | upper }} run &middot; {{ result.scan_time }} &middot;
+  {{ hosts | length }} host{{ "" if hosts | length == 1 else "s" }} observed
+</p>
+
+{% if result.mode.value == "passive" %}
+<div class="notice">
+  <strong>Passive run.</strong> No packets were sent to any address in this
+  report. Observations derive from public datasets (RIPEstat routing data,
+  Shodan InternetDB), the system DNS resolver, and RIR delegation files.
+</div>
+{% else %}
+<div class="notice">
+  <strong>Active run.</strong> Measurements were taken under the authorization
+  recorded in scope hash <code>{{ result.scope_hash or "n/a" }}</code>. Probing
+  was GET-only and unauthenticated; no protocol payloads were written to
+  industrial ports.
+</div>
+{% endif %}
+
+<div class="cards">
+  {% for level in levels %}
+  <div class="card">
+    <span class="n">{{ histogram[level] }}</span>
+    <span class="l"><span class="pill {{ level }}">{{ level }}</span></span>
+  </div>
+  {% endfor %}
+</div>
+
+<h2>Run metadata</h2>
+<table>
+  <tr><td class="k">Mode</td><td>{{ result.mode.value | upper }}</td></tr>
+  <tr><td class="k">Target ASN</td><td>{{ result.target_asn or "n/a" }}</td></tr>
+  <tr><td class="k">Prefixes examined</td><td>{{ result.prefixes | length }}</td></tr>
+  <tr><td class="k">Scope hash</td><td><code>{{ result.scope_hash or "n/a" }}</code></td></tr>
+  <tr><td class="k">Tool version</td><td>{{ tool_version }}</td></tr>
+  <tr><td class="k">Report generated</td><td>{{ generated_at }}</td></tr>
+  <tr><td class="k">Actionable findings</td><td>{{ actionable }}</td></tr>
+  <tr><td class="k">Pre-auth disclosure</td><td>{{ pre_auth_count }}</td></tr>
+  <tr><td class="k">Industrial ports reachable</td><td>{{ ot_exposed_count }}</td></tr>
+</table>
+
+{% if by_vendor %}
+<h2>Identified products</h2>
+<table>
+  <thead><tr><th>Product</th><th>Hosts</th></tr></thead>
+  <tbody>
+  {% for vendor, count in by_vendor.items() %}
+    <tr><td>{{ vendor }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if by_port %}
+<h2>Open ports</h2>
+<table>
+  <thead><tr><th>Port</th><th>Hosts</th></tr></thead>
+  <tbody>
+  {% for port, count in by_port.items() %}
+    <tr><td class="mono">{{ port }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>Findings</h2>
+{% if not hosts %}
+<p>No hosts were observed.</p>
+{% endif %}
+{% for host in hosts %}
+<h3>{{ loop.index }}. {{ host.ip }} <span class="pill {{ host.risk.value }}">{{ host.risk.value }}</span></h3>
+<table>
+  <tr><td class="k">Open ports</td><td class="mono">{{ host.open_ports | join(", ") if host.open_ports else "none" }}</td></tr>
+  <tr><td class="k">Product</td><td>{{ host.vendor or "unidentified" }}</td></tr>
+  <tr><td class="k">Match confidence</td><td>{{ "%.0f%%" | format(host.confidence * 100) }}</td></tr>
+  <tr><td class="k">Evidence layers</td><td class="mono">{{ host.matched_signature or "none" }}</td></tr>
+  <tr><td class="k">Authentication boundary</td><td>{{ "present" if host.auth_wall else "absent" }}</td></tr>
+  <tr><td class="k">Pre-auth disclosure</td>
+      <td>{% if host.pre_auth_disclosure %}<span class="yes">YES</span>{% else %}no{% endif %}</td></tr>
+  <tr><td class="k">Banner</td><td class="mono">{{ host.banner | truncate_text(200) }}</td></tr>
+  {% if host.title %}<tr><td class="k">Page title</td><td>{{ host.title | truncate_text(160) }}</td></tr>{% endif %}
+  {% if host.tls_subject %}<tr><td class="k">TLS subject</td><td class="mono">{{ host.tls_subject | truncate_text(160) }}</td></tr>{% endif %}
+  {% if host.tls_issuer %}<tr><td class="k">TLS issuer</td><td class="mono">{{ host.tls_issuer | truncate_text(160) }}</td></tr>{% endif %}
+  <tr><td class="k">Organisation</td><td>{{ host.org or "unattributed" }}</td></tr>
+  <tr><td class="k">Country</td><td>{{ host.country or "unknown" }}</td></tr>
+  {% if host.hostnames %}<tr><td class="k">Hostnames</td><td class="mono">{{ host.hostnames | join(", ") }}</td></tr>{% endif %}
+  {% if host.cves %}<tr><td class="k">CVE references</td><td class="mono">{{ host.cves | join(", ") }}</td></tr>{% endif %}
+  {% if host.mitre_ics %}<tr><td class="k">MITRE ATT&amp;CK for ICS</td><td class="mono">{{ host.mitre_ics | join(", ") }}</td></tr>{% endif %}
+</table>
+
+{% if host.notes %}
+<strong>Assessment rationale</strong>
+<ul>{% for note in host.notes %}<li>{{ note }}</li>{% endfor %}</ul>
+{% endif %}
+
+{% if host.remediation %}
+<strong>Recommended remediation</strong>
+<ol>{% for step in host.remediation %}<li>{{ step }}</li>{% endfor %}</ol>
+{% endif %}
+{% endfor %}
+
+{% if diff %}
+<h2>Changes since baseline</h2>
+<p class="sub">
+  Baseline {{ diff.baseline_time }} &middot; {{ diff.alerts | length }} change(s)
+  &middot; highest severity {{ diff.max_severity.value }}
+</p>
+<table>
+  <thead><tr><th>Severity</th><th>Change</th><th>Address</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for alert in diff.alerts %}
+    <tr>
+      <td><span class="pill {{ alert.severity.value }}">{{ alert.severity.value }}</span></td>
+      <td class="mono">{{ alert.kind.value }}</td>
+      <td class="mono">{{ alert.ip }}</td>
+      <td>{{ alert.message }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<footer>
+  <p>
+    This report identifies <em>exposure</em>, not confirmed vulnerability. Product
+    identification is signature-based and no authentication was attempted, so
+    verify a finding with the asset owner before making any remediation claim.
+    Follow the disclosure workflow in <code>docs/ETHICS.md</code> before
+    contacting a third party.
+  </p>
+  <p>
+    Banner, title, and certificate strings are remote-controlled input. They are
+    HTML-escaped and this document declares a restrictive Content-Security-Policy;
+    treat the raw JSON output with equivalent caution.
+  </p>
+  <p>Generated by Sentinel {{ tool_version }} at {{ generated_at }}.</p>
+</footer>
+
+</main>
+</body>
+</html>

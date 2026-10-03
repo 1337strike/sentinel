@@ -1,0 +1,18 @@
+[
+{"ip": "10.99.0.10", "timestamp": "1767225600", "ports": [{"port": 9000, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.11", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.12", "timestamp": "1767225600", "ports": [{"port": 8088, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.13", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.14", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.15", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.16", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.17", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.18", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.20", "timestamp": "1767225600", "ports": [{"port": 502, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.21", "timestamp": "1767225600", "ports": [{"port": 102, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.22", "timestamp": "1767225600", "ports": [{"port": 4840, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.23", "timestamp": "1767225600", "ports": [{"port": 1911, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.30", "timestamp": "1767225600", "ports": [{"port": 80, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.31", "timestamp": "1767225600", "ports": [{"port": 22, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+{"ip": "10.99.0.32", "timestamp": "1767225600", "ports": [{"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack", "ttl": 64}]},
+]

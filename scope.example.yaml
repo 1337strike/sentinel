@@ -1,0 +1,89 @@
+# ===========================================================================
+# Sentinel scope file -- ACTIVE SCAN AUTHORIZATION
+# ===========================================================================
+#
+# This file is the authorization record for active probing. Presenting it to
+# `sentinel scan --active --scope-file <path>` mints a capability grant; without
+# a valid file there is no grant, and without a grant the scanner cannot be
+# called at all (the check is a type constraint, not an `if` statement --
+# see sentinel/modules/scope.py).
+#
+# COPY THIS FILE, do not edit it in place. Real scope files are gitignored
+# (`scope.yaml`, `*.scope.yaml`) because they are authorization records tied to
+# a specific engagement and a specific person.
+#
+# ---------------------------------------------------------------------------
+# Every field below is MANDATORY unless marked optional.
+# ---------------------------------------------------------------------------
+
+# WHO is accountable for this authorization. Not a role, not a team -- a
+# person who can be asked "why was this range scanned?" and answer.
+authorized_by: "your.name@example.org"
+
+# WHERE the authorization is documented: engagement ID, change ticket,
+# lab record, or signed scope letter reference. The audit log stores this
+# alongside the scope hash, so a finding can always be traced to its mandate.
+authorization_ref: "LAB-2026-001 (isolated KVM testbed, self-owned)"
+
+# WHEN it stops being valid. Time-boxing is deliberate: an authorization with
+# no expiry outlives the engagement that justified it, and a scope file left in
+# a cron entry is the single most likely way this tool gets misused. Sentinel
+# refuses to mint a grant from an expired file. (Optional but strongly advised.)
+expires: "2026-12-31"
+
+# WHAT may be probed. Every range must be listed EXPLICITLY. There is no
+# wildcard syntax, and no way to authorize a default route.
+#
+# Prefix-length floor: /16 for IPv4 by default (see min_prefix_len_v4), with an
+# absolute hard floor of /8 that no config can lower. "Authorise the Internet"
+# is not expressible in this file.
+authorized_cidrs:
+  # Annotated form -- preferred, because the note survives into review.
+  - cidr: "10.99.0.0/24"
+    note: "Isolated KVM lab bridge virbr-sentinel; ICS simulators, self-owned"
+  - cidr: "10.99.1.0/24"
+    note: "False-positive control containers (nginx, sshd)"
+
+  # Bare form is also accepted.
+  # - "192.168.56.0/24"
+
+# ---------------------------------------------------------------------------
+# Denylist overrides -- opt in per address class, never wholesale
+# ---------------------------------------------------------------------------
+# Private, CGNAT, link-local, and multicast space is REFUSED by default. Each
+# may be enabled individually, and enabling a category does not authorize any
+# range: every CIDR must still appear in authorized_cidrs above.
+#
+# This split is what lets a KVM lab operate on RFC1918 while an
+# Internet-facing study cannot silently inherit the same permission.
+#
+# Valid categories: private, cgnat, link_local, multicast
+allow_categories:
+  - private
+
+# Shorthand equivalent to `allow_categories: [private]`, kept because the lab
+# case is overwhelmingly the common one.
+# allow_private: true
+
+# PERMANENTLY REFUSED, and NOT listable here at any privilege level:
+#   loopback      (127.0.0.0/8)      -- meaningless as a scan target
+#   unspecified   (0.0.0.0/8)
+#   broadcast     (255.255.255.255)
+#   reserved      (240.0.0.0/4, 198.18.0.0/15 benchmark range)
+# Attempting to add one of these to allow_categories is a hard error. There is
+# no defensible research reason to put packets on them, so no override exists.
+
+# ---------------------------------------------------------------------------
+# Optional: tighten the prefix-length floor below the defaults
+# ---------------------------------------------------------------------------
+# Defaults: /16 for IPv4, /48 for IPv6. You may make these STRICTER (a larger
+# number). Values below the hard floors (/8 v4, /32 v6) are rejected outright.
+min_prefix_len_v4: 24
+# min_prefix_len_v6: 64
+
+# Free-text context, recorded in the audit log. (Optional.)
+notes: >
+  Isolated QEMU/KVM testbed on an internal bridge with no NAT and no default
+  route. Active-scan experiments (E1, E3, E5) run with host egress dropped by
+  nftables, so no packet can leave the lab even if a target were mistyped.
+  Verified with labs/kvm/isolated_bridge.sh --verify before each run.

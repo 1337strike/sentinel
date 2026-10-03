@@ -1,0 +1,30 @@
+HTTP/1.1 200 OK
+Server: Jetty(9.4.44.v20210927)
+Content-Type: text/html; charset=utf-8
+X-Fixture-Paths: /main/web/status
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gateway Status</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:2rem;color:#111;background:#fff}
+table{border-collapse:collapse;margin:1rem 0}
+th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}
+h1{font-size:1.3rem} label{display:block;margin:.4rem 0}
+</style>
+</head>
+<body>
+<!-- LAB SIMULATOR. Hand-authored from public product documentation for the
+     Sentinel testbed. Not derived from signatures.yaml: generating targets
+     from the detector's own patterns would make detection measurement
+     circular. Layers deliberately present here: L1 server_header (weak), L4 js_globals, L5 url_pattern -->
+<h1>Gateway</h1>
+<p>Edition: Standard &middot; Version 8.1.21 &middot; Uptime 41 days</p>
+<ul><li>Projects: 3</li><li>Devices: 17</li><li>Tags: 8,412</li></ul>
+<script>
+var IgnitionGateway = { name: "PLANT-GW-01", version: "8.1.21", edition: "standard" };
+</script>
+</body>
+</html>

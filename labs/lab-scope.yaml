@@ -1,0 +1,23 @@
+# Active-scan authorization for the Sentinel reference testbed.
+#
+# Committed deliberately: this authorizes ONLY the self-owned isolated lab
+# bridge, so the experiment suite is runnable from a clean checkout. A scope
+# file for any real network must never be committed -- .gitignore covers
+# scope.yaml and *.scope.yaml for that reason.
+authorized_by: "sentinel-lab-operator"
+authorization_ref: "LAB-REFERENCE-TESTBED (self-owned, isolated bridge, no egress)"
+expires: "2027-12-31"
+
+authorized_cidrs:
+  - cidr: "10.99.0.0/24"
+    note: "virbr-sentinel isolated bridge; ICS simulators and FP controls"
+
+# RFC1918 is refused by default; the lab opts in explicitly for this category.
+allow_categories:
+  - private
+
+min_prefix_len_v4: 24
+
+notes: >
+  Isolated QEMU/KVM bridge with no NAT and no default route. Verify isolation
+  with labs/kvm/isolated_bridge.sh --verify before any active run.

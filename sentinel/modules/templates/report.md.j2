@@ -1,0 +1,139 @@
+# Sentinel ICS/SCADA Exposure Report
+
+| | |
+| --- | --- |
+| Scan time | `{{ result.scan_time | md }}` |
+| Mode | **{{ result.mode.value | upper }}** |
+| Target ASN | {{ (result.target_asn or "n/a") | md }} |
+| Prefixes examined | {{ result.prefixes | length }} |
+| Hosts observed | {{ hosts | length }} |
+| Scope hash | `{{ (result.scope_hash or "n/a") | md }}` |
+| Tool version | {{ tool_version | md }} |
+| Report generated | `{{ generated_at | md }}` |
+
+{% if result.mode.value == "passive" %}
+> **Passive run.** No packets were sent to any address in this report. Every
+> observation below is derived from public datasets (RIPEstat routing data and
+> Shodan InternetDB), the system DNS resolver, and registry delegation files.
+{% else %}
+> **Active run.** Measurements were taken under the authorization recorded in
+> scope hash `{{ (result.scope_hash or "n/a") | md }}`. Probing was GET-only and
+> unauthenticated; no protocol payloads were written to industrial ports.
+{% endif %}
+
+## Risk summary
+
+| Level | Hosts |
+| --- | --- |
+{% for level in levels %}
+| {{ level }} | {{ histogram[level] }} |
+{% endfor %}
+
+- Actionable findings (CRITICAL + HIGH + MEDIUM): **{{ actionable }}**
+- Pre-authentication content disclosure: **{{ pre_auth_count }}**
+- Industrial protocol ports reachable: **{{ ot_exposed_count }}**
+
+{% if by_vendor %}
+### Identified products
+
+| Product | Hosts |
+| --- | --- |
+{% for vendor, count in by_vendor.items() %}
+| {{ vendor | md }} | {{ count }} |
+{% endfor %}
+{% endif %}
+
+{% if by_port %}
+### Open ports
+
+| Port | Hosts |
+| --- | --- |
+{% for port, count in by_port.items() %}
+| {{ port }} | {{ count }} |
+{% endfor %}
+{% endif %}
+
+{% if by_country %}
+### Country attribution (RIR delegation data)
+
+| Country | Hosts |
+| --- | --- |
+{% for country, count in by_country.items() %}
+| {{ country | md }} | {{ count }} |
+{% endfor %}
+{% endif %}
+
+## Findings
+
+{% if not hosts %}
+No hosts were observed.
+{% endif %}
+{% for host in hosts %}
+### {{ loop.index }}. `{{ host.ip | md }}` — {{ host.risk.value }}
+
+| Field | Value |
+| --- | --- |
+| Open ports | {{ host.open_ports | join(", ") if host.open_ports else "none" }} |
+| Product | {{ (host.vendor or "unidentified") | md }} |
+| Match confidence | {{ "%.0f%%" | format(host.confidence * 100) }} |
+| Evidence layers | {{ (host.matched_signature or "none") | md }} |
+| Authentication boundary | {{ "present" if host.auth_wall else "absent" }} |
+| Pre-auth disclosure | {{ "YES" if host.pre_auth_disclosure else "no" }} |
+| Banner | `{{ host.banner | truncate_text(160) | md }}` |
+| Page title | {{ host.title | truncate_text(120) | md if host.title else "n/a" }} |
+| TLS subject | {{ host.tls_subject | truncate_text(120) | md if host.tls_subject else "n/a" }} |
+| Organisation | {{ (host.org or "unattributed") | md }} |
+| Country | {{ (host.country or "unknown") | md }} |
+| Hostnames | {{ host.hostnames | join(", ") | md if host.hostnames else "none" }} |
+{% if host.cves %}
+| CVE references | {{ host.cves | join(", ") | md }} |
+{% endif %}
+{% if host.mitre_ics %}
+| MITRE ATT&CK for ICS | {{ host.mitre_ics | join(", ") | md }} |
+{% endif %}
+
+{% if host.notes %}
+**Assessment rationale**
+
+{% for note in host.notes %}
+- {{ note | md }}
+{% endfor %}
+{% endif %}
+
+{% if host.remediation %}
+**Recommended remediation**
+
+{% for step in host.remediation %}
+{{ loop.index }}. {{ step | md }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+
+{% if diff %}
+## Changes since baseline
+
+- Baseline: `{{ diff.baseline_time | md }}`
+- Changes: **{{ diff.alerts | length }}**
+- Highest severity: **{{ diff.max_severity.value }}**
+
+| Severity | Change | Address | Detail |
+| --- | --- | --- | --- |
+{% for alert in diff.alerts %}
+| {{ alert.severity.value }} | {{ alert.kind.value }} | `{{ alert.ip | md }}` | {{ alert.message | md }} |
+{% endfor %}
+{% endif %}
+
+---
+
+## Handling notes
+
+This report identifies exposure; it does not confirm vulnerability. A product
+match is signature-based and no authentication was attempted, so a finding
+should be verified with the asset owner before any remediation claim is made.
+Follow the disclosure workflow in `docs/ETHICS.md` before contacting any
+third party.
+
+Collected banner, title, and certificate strings are remote-controlled input and
+have been escaped for safe rendering. Treat the raw JSON output with the same
+caution.

@@ -1,0 +1,334 @@
+# ===========================================================================
+# Sentinel testbed ground truth
+# ===========================================================================
+#
+# Authoritative declaration of WHAT each lab target actually is, independent of
+# what the detector concludes about it. Experiments E1 (detection rate) and
+# E2 (false positives) score Sentinel's output against this file.
+#
+# ---------------------------------------------------------------------------
+# METHODOLOGICAL NOTE -- read before citing any E1/E2 number
+# ---------------------------------------------------------------------------
+# The lab HMI mockups (labs/docker/hmi/*/index.html) were hand-authored from
+# public product documentation. They were deliberately NOT generated from
+# signatures.yaml: building targets out of the detector's own patterns would
+# make detection measurement circular and would guarantee a meaningless 100%
+# recall.
+#
+# Consequently the mockups expose DIFFERENT SUBSETS of the five fingerprinting
+# layers. `layers_present` below records which, per target. Several targets
+# (wonderware, abb) present a single weak layer on purpose and are expected to
+# sit near or below the confirmation threshold -- they are what makes the
+# detection ROC curve in E1 non-degenerate.
+#
+# `expected_detectable` states the honest prior for each target, so a miss on a
+# deliberately-weak target is reported as a known limitation rather than being
+# quietly excluded from the denominator.
+#
+# ---------------------------------------------------------------------------
+# ZERO-PAYLOAD CONSTRAINT and its effect on protocol targets
+# ---------------------------------------------------------------------------
+# Sentinel never writes a byte to an industrial protocol port (see
+# docs/ARCHITECTURE.md). Modbus, S7, OPC-UA and Fox are all client-speaks-first,
+# so for those targets the only obtainable evidence is "a service is listening
+# on this port". `vendor` is therefore `null` for them and `vendor_detectable`
+# is false: scoring Sentinel against a vendor expectation it structurally cannot
+# meet would be measuring the wrong thing. They are scored on ICS/non-ICS
+# classification only.
+#
+# Two of the four protocol targets are real protocol servers (pymodbus,
+# asyncua); S7 and Fox are bare TCP listeners. For a listen-only detector these
+# are behaviourally equivalent, but the substitution IS a limitation and is
+# declared here and in docs/PAPER_NOTES.md rather than glossed over.
+# ===========================================================================
+
+version: 1
+
+lab:
+  network: "10.99.0.0/24"
+  bridge: "virbr-sentinel"
+  notes: >
+    Isolated bridge, no NAT, no default route. Active-scan experiments run with
+    host egress dropped by nftables; see labs/kvm/isolated_bridge.sh.
+
+targets:
+
+  # -------------------------------------------------------------------------
+  # ICS: web-based HMI / supervisory interfaces
+  # -------------------------------------------------------------------------
+
+  - ip: "10.99.0.10"
+    port: 9000
+    service: "http"
+    container: "sentinel-redy"
+    is_ics: true
+    vendor: "REDY-Process"
+    vendor_detectable: true
+    version: "2.4.1"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L3", "L4"]
+    notes: >
+      Serves live datapoint values and tag names to an anonymous GET. The
+      canonical pre-authentication disclosure case.
+
+  - ip: "10.99.0.11"
+    port: 8080
+    service: "http"
+    container: "sentinel-niagara"
+    is_ics: true
+    vendor: "Niagara/Tridium"
+    vendor_detectable: true
+    version: "4.10.3.80"
+    auth_wall: true
+    expected_risk: "HIGH"
+    expected_detectable: strong
+    layers_present: ["L3", "L4"]
+    notes: >
+      No Server header on purpose: exercises the title and JS-global layers in
+      isolation. Login form present, so HIGH rather than CRITICAL.
+
+  - ip: "10.99.0.12"
+    port: 8088
+    service: "http"
+    container: "sentinel-ignition"
+    is_ics: true
+    vendor: "Inductive Automation Ignition"
+    vendor_detectable: true
+    version: "8.1.21"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L4", "L5"]
+    notes: >
+      Generic Jetty Server header; identification rests on the JS global and the
+      /main/web/status endpoint. Tests the URL-pattern layer.
+
+  - ip: "10.99.0.13"
+    port: 8080
+    service: "http"
+    container: "sentinel-wonderware"
+    is_ics: true
+    vendor: "WonderWare/AVEVA"
+    vendor_detectable: true
+    version: null
+    auth_wall: true
+    expected_risk: "HIGH"
+    expected_detectable: weak
+    layers_present: ["L3"]
+    notes: >
+      DELIBERATELY BORDERLINE. Title keyword only, no header and no JS global,
+      so the match score lands near the confirmation threshold. Expected to be
+      threshold-sensitive in the E1 ROC sweep; a miss here is a reported
+      limitation, not a bug.
+
+  - ip: "10.99.0.14"
+    port: 8080
+    service: "http"
+    container: "sentinel-factorytalk"
+    is_ics: true
+    vendor: "FactoryTalk"
+    vendor_detectable: true
+    version: "12.00.00"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L3", "L4"]
+
+  - ip: "10.99.0.15"
+    port: 8080
+    service: "http"
+    container: "sentinel-citect"
+    is_ics: true
+    vendor: "Citect"
+    vendor_detectable: true
+    version: "8.10"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L3", "L4"]
+
+  - ip: "10.99.0.16"
+    port: 8080
+    service: "http"
+    container: "sentinel-geifix"
+    is_ics: true
+    vendor: "GE iFIX"
+    vendor_detectable: true
+    version: "6.1"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L3", "L4", "L5"]
+
+  - ip: "10.99.0.17"
+    port: 8080
+    service: "http"
+    container: "sentinel-abb"
+    is_ics: true
+    vendor: "ABB"
+    vendor_detectable: true
+    version: null
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: weak
+    layers_present: ["L3", "L4"]
+    notes: >
+      DELIBERATELY AMBIGUOUS. The AC500 serves a CODESYS WebVisu application, so
+      the CODESYS WebVisu signature is a legitimate competing match. Expect an
+      off-diagonal confusion-matrix entry between ABB and CODESYS WebVisu; that
+      overlap is real-world behaviour, not a labelling error.
+
+  - ip: "10.99.0.18"
+    port: 8080
+    service: "http"
+    container: "sentinel-honeywell"
+    is_ics: true
+    vendor: "Honeywell"
+    vendor_detectable: true
+    version: "3.2"
+    auth_wall: false
+    expected_risk: "CRITICAL"
+    expected_detectable: strong
+    layers_present: ["L1", "L3", "L4"]
+    notes: >
+      DELIBERATELY AMBIGUOUS. Honeywell building controllers embed the Niagara
+      framework and the page says so, so Niagara/Tridium is a legitimate
+      competing match. Second expected off-diagonal entry in E1.
+
+  # -------------------------------------------------------------------------
+  # ICS: industrial protocol endpoints (vendor NOT detectable -- zero payload)
+  # -------------------------------------------------------------------------
+
+  - ip: "10.99.0.20"
+    port: 502
+    service: "modbus"
+    container: "sentinel-modbus"
+    is_ics: true
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: false
+    expected_risk: "MEDIUM"
+    expected_detectable: port_only
+    layers_present: []
+    implementation: "pymodbus (real protocol server)"
+    notes: >
+      Modbus/TCP is client-speaks-first and has no authentication by design.
+      Sentinel confirms a listening service and nothing more. MEDIUM comes from
+      risk.py's documented ot_protocol_exposed refinement, not from a signature
+      match.
+
+  - ip: "10.99.0.21"
+    port: 102
+    service: "s7comm"
+    container: "sentinel-s7"
+    is_ics: true
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: false
+    expected_risk: "MEDIUM"
+    expected_detectable: port_only
+    layers_present: []
+    implementation: "TCP listener stub (snap7-server optional; see labs/docker/README.md)"
+    notes: >
+      LIMITATION: a bare listener, not a real S7 stack. Behaviourally equivalent
+      for a listen-only detector, but it means E1 cannot claim S7 protocol
+      identification -- only port-level ICS classification.
+
+  - ip: "10.99.0.22"
+    port: 4840
+    service: "opcua"
+    container: "sentinel-opcua"
+    is_ics: true
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: false
+    expected_risk: "MEDIUM"
+    expected_detectable: port_only
+    layers_present: []
+    implementation: "asyncua (real protocol server)"
+
+  - ip: "10.99.0.23"
+    port: 1911
+    service: "niagara-fox"
+    container: "sentinel-fox"
+    is_ics: true
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: false
+    expected_risk: "MEDIUM"
+    expected_detectable: port_only
+    layers_present: []
+    implementation: "TCP listener stub"
+
+  # -------------------------------------------------------------------------
+  # NON-ICS false-positive controls (experiment E2)
+  # -------------------------------------------------------------------------
+
+  - ip: "10.99.0.30"
+    port: 80
+    service: "http"
+    container: "sentinel-control-corporate"
+    is_ics: false
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: false
+    expected_risk: "LOW"
+    expected_detectable: must_not_detect
+    layers_present: []
+    notes: >
+      THE HARD NEGATIVE. A consultancy marketing page using industrial
+      vocabulary -- "process control", "SCADA migration", "HMI", "building
+      management", "IEC 62443" -- while being an ordinary web server. A
+      keyword-matching detector flags this; a layered one should not rate it
+      above MEDIUM, and must not report it as a confirmed product. This single
+      target is the most informative measurement in E2.
+
+  - ip: "10.99.0.31"
+    port: 22
+    service: "ssh"
+    container: "sentinel-control-ssh"
+    is_ics: false
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: true
+    expected_risk: "LOW"
+    expected_detectable: must_not_detect
+    layers_present: []
+    notes: >
+      Server-speaks-first: emits an SSH identification banner on connect, so it
+      exercises the listen-only TCP probe path with a non-empty banner.
+
+  - ip: "10.99.0.32"
+    port: 8080
+    service: "http"
+    container: "sentinel-control-intranet"
+    is_ics: false
+    vendor: null
+    vendor_detectable: false
+    version: null
+    auth_wall: true
+    expected_risk: "LOW"
+    expected_detectable: must_not_detect
+    layers_present: []
+
+# ===========================================================================
+# Expected aggregate outcomes. Asserted by tests/test_ground_truth.py so that
+# editing this file without re-deriving the counts fails fast.
+# ===========================================================================
+expected:
+  total_targets: 16
+  ics_targets: 13
+  non_ics_targets: 3
+  vendor_detectable_targets: 9
+  port_only_targets: 4
+  deliberately_weak: ["10.99.0.13", "10.99.0.17"]
+  deliberately_ambiguous: ["10.99.0.17", "10.99.0.18"]
+  hard_negative: "10.99.0.30"

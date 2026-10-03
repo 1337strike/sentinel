@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinel-ics"
+version = "0.1.0"
+description = "Continuous exposure monitoring of Internet-facing ICS/SCADA assets using passive fingerprinting"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Sentinel Research" }]
+keywords = ["ics", "scada", "ot-security", "passive-fingerprinting", "exposure-monitoring"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "requests>=2.31",
+    "aiohttp>=3.9",
+    "dnspython>=2.4",
+    "rich>=13.7",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+nmap = ["python-nmap>=0.7.1"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "black>=24.3",
+]
+
+[project.scripts]
+sentinel = "sentinel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sentinel*"]
+
+[tool.setuptools.package-data]
+sentinel = ["config/*.yaml", "modules/templates/*.j2"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "RET", "SIM", "ARG", "PTH"]
+ignore = [
+    "E501",    # line length is handled by black
+    "B008",    # argparse/default-factory patterns
+
+    # N818 wants every exception suffixed "Error". Refused deliberately: the
+    # refusal exceptions are named for what they mean to an operator reading a
+    # failure, and that distinction is load-bearing here. ScopeViolation and
+    # ModeViolation signal "Sentinel declined" (exit 2), not "Sentinel broke" --
+    # renaming them to ScopeViolationError would blur a safety boundary the CLI
+    # exit codes depend on. Same for CredentialPolicyViolation (exit 3) and for
+    # DatasetUnavailable / ScannerUnavailable, which describe a condition of the
+    # world rather than a program fault.
+    "N818",
+
+    # B003 flags assignment to os.environ. That assignment IS the feature:
+    # credguard installs a guarded mapping in its place so credential-shaped
+    # reads from inside this package raise. The lint's concern (that assigning
+    # does not clear the real environment) is exactly the required behaviour --
+    # the guard must delegate to the live environment, not replace it.
+    "B003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002", "N802"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "offline: test must never touch a real network (enforced by conftest socket guard)",
+]

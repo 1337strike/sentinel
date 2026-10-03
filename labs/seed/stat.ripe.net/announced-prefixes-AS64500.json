@@ -1,0 +1,26 @@
+{
+  "status": "ok",
+  "status_code": 200,
+  "data_call_name": "announced-prefixes",
+  "data": {
+    "resource": "64500",
+    "prefixes": [
+      {
+        "prefix": "192.0.2.0/24",
+        "timelines": [
+          {
+            "starttime": "2026-01-01T00:00:00"
+          }
+        ]
+      },
+      {
+        "prefix": "198.51.100.0/24",
+        "timelines": [
+          {
+            "starttime": "2026-01-01T00:00:00"
+          }
+        ]
+      }
+    ]
+  }
+}

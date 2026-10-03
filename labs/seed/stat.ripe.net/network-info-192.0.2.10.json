@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "status_code": 200,
+  "data_call_name": "network-info",
+  "data": {
+    "prefix": "192.0.2.0/24",
+    "asns": [
+      "64500"
+    ]
+  }
+}

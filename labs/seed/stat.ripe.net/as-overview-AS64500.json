@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "status_code": 200,
+  "data_call_name": "as-overview",
+  "data": {
+    "resource": "64500",
+    "holder": "EXAMPLE-DOCUMENTATION-AS",
+    "announced": true,
+    "type": "as"
+  }
+}

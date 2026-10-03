@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Niagara Station :: JACE-8000 BUILDING-A</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;margin:2rem;color:#111;background:#fff}
+table{border-collapse:collapse;margin:1rem 0}
+th,td{border:1px solid #ccc;padding:.3rem .6rem;text-align:left}
+h1{font-size:1.3rem} label{display:block;margin:.4rem 0}
+</style>
+</head>
+<body>
+<!-- LAB SIMULATOR. Hand-authored from public product documentation for the
+     Sentinel testbed. Not derived from signatures.yaml: generating targets
+     from the detector's own patterns would make detection measurement
+     circular. Layers deliberately present here: L3 title, L4 js_globals (auth wall present) -->
+<h1>Niagara Station Login</h1>
+<p>Station BUILDING-A &middot; Niagara 4.10.3.80 &middot; JACE-8000</p>
+<form action="/login" method="post">
+  <label>Username <input type="text" name="user"></label>
+  <label>Password <input type="password" name="pass"></label>
+  <button type="submit">Sign in</button>
+</form>
+<script src="/bajaux/bajaScript.js"></script>
+<script>
+var niagaraVersion = "4.10.3.80";
+var BajaScript = { station: "BUILDING-A", ord: "station:|slot:/" };
+</script>
+</body>
+</html>
