@@ -1,7 +1,7 @@
 HTTP/1.1 200 OK
 Server: REDY-Process/2.4.1 lighttpd/1.4.55
 Content-Type: text/html; charset=utf-8
-X-Fixture-Paths: /api/datapoints
+X-Fixture-Paths: /api/datapoints,/process/overview,/redy,/cgi-bin/redy
 
 <!doctype html>
 <html lang="en">

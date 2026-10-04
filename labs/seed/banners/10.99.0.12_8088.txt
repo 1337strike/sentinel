@@ -1,7 +1,7 @@
 HTTP/1.1 200 OK
 Server: Jetty(9.4.44.v20210927)
 Content-Type: text/html; charset=utf-8
-X-Fixture-Paths: /main/web/status
+X-Fixture-Paths: /main/web/status,/main/web/config,/system/gateway
 
 <!doctype html>
 <html lang="en">

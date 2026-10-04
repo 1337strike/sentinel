@@ -168,6 +168,7 @@ class Host:
     hostnames: list[str] = field(default_factory=list)
     tls_subject: str | None = None
     tls_issuer: str | None = None
+    tls_version: str | None = None
     cves: list[str] = field(default_factory=list)
     mitre_ics: list[str] = field(default_factory=list)
     remediation: list[str] = field(default_factory=list)
@@ -198,6 +199,7 @@ class Host:
             "hostnames": list(self.hostnames),
             "tls_subject": self.tls_subject,
             "tls_issuer": self.tls_issuer,
+            "tls_version": self.tls_version,
             "cves": list(self.cves),
             "mitre_ics": list(self.mitre_ics),
             "remediation": list(self.remediation),
@@ -226,6 +228,7 @@ class Host:
             hostnames=list(raw.get("hostnames", [])),
             tls_subject=raw.get("tls_subject"),
             tls_issuer=raw.get("tls_issuer"),
+            tls_version=raw.get("tls_version"),
             cves=list(raw.get("cves", [])),
             mitre_ics=list(raw.get("mitre_ics", [])),
             remediation=list(raw.get("remediation", [])),

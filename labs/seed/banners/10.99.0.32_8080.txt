@@ -1,7 +1,6 @@
-HTTP/1.1 401 Unauthorized
+HTTP/1.1 200 OK
 Server: nginx/1.25.3
 Content-Type: text/html; charset=utf-8
-WWW-Authenticate: Basic realm="Station"
 
 <!doctype html>
 <html lang="en">

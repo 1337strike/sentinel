@@ -380,6 +380,8 @@ class Observation:
     tls_issuer: str | None = None
     tls_not_after: str | None = None
     tls_self_signed: bool | None = None
+    tls_version: str | None = None
+    tls_cipher: str | None = None
     matched_paths: list[str] = field(default_factory=list)
     auth_wall: bool = False
     listening: bool = False
@@ -577,8 +579,6 @@ async def probe_http(
             raw = await response.content.read(policy.max_body_bytes)
             obs.body = raw.decode("utf-8", errors="replace")
             obs.listening = True
-            if chosen == "https" and policy.collect_tls_metadata:
-                _attach_tls_metadata(obs, response)
     except aiohttp.ClientConnectorSSLError:
         # Port answered but is not TLS (or the inverse). Retry the other scheme
         # once; embedded devices commonly serve HTTP on 8443 and vice versa.
@@ -627,35 +627,71 @@ async def _probe_paths(
     return found
 
 
-def _attach_tls_metadata(obs: Observation, response: aiohttp.ClientResponse) -> None:
-    """Pull certificate details off a live aiohttp connection.
+async def probe_tls_certificate(ip: str, port: int, config: SentinelConfig) -> Observation:
+    """Collect certificate metadata with a dedicated TLS handshake (layer L2).
 
-    Reuses the connection already established for the GET rather than opening a
-    second one, which keeps the per-host packet budget honest for the evaluation.
+    Costs one extra TCP+TLS handshake per HTTPS endpoint. An earlier version
+    tried to reuse the aiohttp connection from the GET via
+    ``response.connection`` -- that returns ``None``, so the certificate was
+    never read and **layer L2 silently never fired on the live path** while
+    appearing to work in offline replay (where the fixture declares the
+    subject). Silent under-collection in a measurement tool is worse than an
+    honest extra connection, so the handshake is explicit and counted.
+
+    Handshakes only: no application data is written, and the certificate is
+    recorded as evidence, never used as a basis for trust.
     """
+    obs = Observation(ip=ip, port=port, scheme="https")
     if not _HAVE_X509:
-        return
-    try:
-        connection = response.connection
-        transport = getattr(connection, "transport", None)
-        ssl_object = transport.get_extra_info("ssl_object") if transport else None
-        der = ssl_object.getpeercert(binary_form=True) if ssl_object else None
-    except (AttributeError, ValueError, OSError):
-        return
-    if not der:
-        return
+        log_event(
+            _log,
+            "source_unavailable",
+            "cryptography is not installed; TLS layer L2 is unavailable",
+            target=ip,
+            level=30,
+        )
+        return obs
 
+    writer: asyncio.StreamWriter | None = None
     try:
-        cert = x509.load_der_x509_certificate(der)
-        obs.tls_subject = cert.subject.rfc4514_string()
-        obs.tls_issuer = cert.issuer.rfc4514_string()
-        obs.tls_not_after = cert.not_valid_after_utc.isoformat()
-        obs.tls_self_signed = cert.subject == cert.issuer
-        # Touch Encoding so the import is not flagged unused by linters while
-        # remaining available for callers that need PEM export.
-        _ = Encoding.DER
-    except (ValueError, TypeError):  # pragma: no cover -- malformed cert
-        obs.tls_subject = None
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=_tls_context()),
+            timeout=config.timeouts.tls_handshake,
+        )
+        obs.listening = True
+        ssl_object = writer.get_extra_info("ssl_object")
+        der = ssl_object.getpeercert(binary_form=True) if ssl_object else None
+        if ssl_object is not None:
+            obs.tls_version = ssl_object.version()
+            cipher = ssl_object.cipher()
+            obs.tls_cipher = cipher[0] if cipher else None
+        if der:
+            cert = x509.load_der_x509_certificate(der)
+            obs.tls_subject = cert.subject.rfc4514_string()
+            obs.tls_issuer = cert.issuer.rfc4514_string()
+            obs.tls_not_after = cert.not_valid_after_utc.isoformat()
+            obs.tls_self_signed = cert.subject == cert.issuer
+            # Encoding is referenced so the import stays meaningful for callers
+            # that need PEM export of a recorded certificate.
+            _ = Encoding.DER
+    except (TimeoutError, asyncio.TimeoutError, OSError, ssl.SSLError, ValueError) as exc:
+        obs.error = f"{type(exc).__name__}: {exc}"
+    finally:
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(OSError, asyncio.TimeoutError, ssl.SSLError):
+                await writer.wait_closed()
+    return obs
+
+
+def _merge_tls(target: Observation, source: Observation) -> None:
+    """Copy certificate evidence from a TLS probe onto the HTTP observation."""
+    target.tls_subject = source.tls_subject
+    target.tls_issuer = source.tls_issuer
+    target.tls_not_after = source.tls_not_after
+    target.tls_self_signed = source.tls_self_signed
+    target.tls_version = source.tls_version
+    target.tls_cipher = source.tls_cipher
 
 
 def _detect_auth_wall(obs: Observation) -> bool:
@@ -712,6 +748,15 @@ async def fingerprint_host(
                 obs = await probe_http(session, host.ip, port, config)
             else:
                 obs = await probe_tcp_listen(host.ip, port, config)
+
+        # Layer L2. A separate handshake, because the certificate cannot be
+        # read off the aiohttp connection (see probe_tls_certificate). Done
+        # before path selection so the certificate can also inform which
+        # product endpoints are worth probing.
+        if obs.scheme == "https" and obs.listening and policy.collect_tls_metadata:
+            async with semaphore:
+                await pacer.wait()
+                _merge_tls(obs, await probe_tls_certificate(host.ip, port, config))
 
         # Second pass: confirm the product using its own endpoints. Candidates
         # are derived from what the root response already suggests, so a host
@@ -779,6 +824,13 @@ def _fold_observations(
         host.title = best_obs.title or host.title
         host.tls_subject = best_obs.tls_subject or host.tls_subject
         host.tls_issuer = best_obs.tls_issuer or host.tls_issuer
+        host.tls_version = best_obs.tls_version or host.tls_version
+        if best_obs.tls_self_signed:
+            host.notes.append(
+                "TLS certificate is self-signed, which is normal for ICS "
+                "equipment and is recorded as evidence rather than treated as "
+                "a trust decision."
+            )
         host.auth_wall = best_obs.auth_wall
     else:
         first = next((o for o in observations if o.listening), None)

@@ -1,5 +1,7 @@
 HTTP/1.1 200 OK
 Content-Type: text/html; charset=utf-8
+X-Fixture-TLS-Subject: OU=Niagara Framework,O=Tridium Inc,CN=JACE-8000-BUILDING-B
+X-Fixture-TLS-Issuer: OU=Niagara Framework,O=Tridium Inc,CN=JACE-8000-BUILDING-B
 X-Fixture-Paths: /login,/ord,/prelogin
 
 <!doctype html>

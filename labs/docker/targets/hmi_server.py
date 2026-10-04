@@ -20,7 +20,17 @@ AUTH_PATHS          Comma-separated paths answering 401 with a
                     WWW-Authenticate challenge (authentication boundary)
 AUTH_ALL            "1" => every path except PRODUCT_PATHS answers 401
 BANNER_DELAY        Seconds to stall before responding (timeout testing)
+TLS                 "1" => serve HTTPS with a self-signed certificate
+                    generated at startup (exercises layer L2)
+TLS_SUBJECT         OpenSSL subject for that certificate, e.g.
+                    "/CN=JACE-8000/O=Tridium/OU=Niagara"
 ==================  ====================================================
+
+On TLS: the certificate is generated fresh at container start and is
+deliberately self-signed, because that is what real ICS devices present. Its
+subject encodes the product, which is precisely the L2 signal under test. The
+key never leaves the container and protects nothing -- this is a fingerprinting
+target, not a confidentiality boundary.
 
 This is a passive target. It accepts GET and HEAD and nothing else; there is no
 POST handler, no form processing, and no credential checking of any kind. The
@@ -32,6 +42,9 @@ there is nothing here to brute-force even in the lab.
 from __future__ import annotations
 
 import os
+import ssl
+import subprocess
+import tempfile
 import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +63,8 @@ PRODUCT_PATHS = _csv("PRODUCT_PATHS")
 AUTH_PATHS = _csv("AUTH_PATHS")
 AUTH_ALL = os.environ.get("AUTH_ALL", "0") == "1"
 BANNER_DELAY = float(os.environ.get("BANNER_DELAY", "0"))
+TLS = os.environ.get("TLS", "0") == "1"
+TLS_SUBJECT = os.environ.get("TLS_SUBJECT", "/CN=lab-target")
 
 
 class HmiHandler(SimpleHTTPRequestHandler):
@@ -126,13 +141,45 @@ class HmiHandler(SimpleHTTPRequestHandler):
         print(f"[hmi:{PORT}] {fmt % args}", flush=True)  # noqa: T201 -- lab target
 
 
+def _generate_self_signed(subject: str) -> tuple[str, str]:
+    """Generate a throwaway self-signed certificate. Returns (cert, key) paths.
+
+    Deliberately self-signed and deliberately long-lived-but-disposable: ICS
+    devices ship exactly this, and the subject is the layer-L2 signal. The key
+    is generated inside the container on every start and protects nothing.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="labtls-"))
+    cert, key = tmp / "cert.pem", tmp / "key.pem"
+    subprocess.run(  # noqa: S603 -- fixed argv, shell=False
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(cert),
+            "-days", "825", "-subj", subject,
+            "-addext", "basicConstraints=CA:TRUE",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return str(cert), str(key)
+
+
 def main() -> None:
     if not ROOT.is_dir():
         raise SystemExit(f"ROOT {ROOT} is not a directory")
     handler = partial(HmiHandler, directory=str(ROOT))
     server = ThreadingHTTPServer(("0.0.0.0", PORT), handler)  # noqa: S104 -- lab container
+
+    scheme = "http"
+    if TLS:
+        cert_path, key_path = _generate_self_signed(TLS_SUBJECT)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+        print(f"[hmi] self-signed certificate subject={TLS_SUBJECT}", flush=True)
+
     print(
-        f"[hmi] serving {ROOT} on :{PORT} "
+        f"[hmi] serving {ROOT} on {scheme}://0.0.0.0:{PORT} "
         f"server_header={SERVER_HEADER or '<suppressed>'} "
         f"product_paths={PRODUCT_PATHS} auth_all={AUTH_ALL}",
         flush=True,

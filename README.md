@@ -175,7 +175,7 @@ sentinel report      -i out/enriched.json --format markdown -o out/report.md
 sentinel verify-audit
 ```
 
-Result on the reference testbed (16 targets, 13 ICS + 3 non-ICS controls):
+Result on the reference testbed (17 targets, 14 ICS + 3 non-ICS controls):
 
 | Address | Risk | Conf. | Identified | Layers |
 |---|---|---|---|---|
@@ -184,7 +184,8 @@ Result on the reference testbed (16 targets, 13 ICS + 3 non-ICS controls):
 | `10.99.0.12:8088` | CRITICAL | 0.64 | Ignition | L1 L4 L5 |
 | `10.99.0.13:8080` | MEDIUM | 0.27 | WonderWare/AVEVA | L3 |
 | `10.99.0.16:8080` | CRITICAL | 0.86 | GE iFIX | L1 L3 L4 L5 |
-| `10.99.0.17:8080` | MEDIUM | 0.41 | *CODESYS WebVisu* | L3 L4 |
+| `10.99.0.17:8080` | CRITICAL | 0.55 | *CODESYS WebVisu* | L3 L4 L5 |
+| `10.99.0.19:8443` | HIGH | 0.68 | Niagara/Tridium | **L2** L3 L4 L5 |
 | `10.99.0.20:502` | MEDIUM | 0.00 | — (port only) | — |
 | `10.99.0.30:80` | LOW | 0.00 | — | — |
 
@@ -194,12 +195,20 @@ The three rows worth reading are the *failures*, which are deliberate:
   confirmation threshold. It is the threshold-sensitive case that makes the
   detection ROC curve non-degenerate.
 - **`.17`** is an ABB AC500, which genuinely serves a CODESYS WebVisu
-  application, so the matcher reports CODESYS. That off-diagonal confusion entry
-  is real product behaviour, predicted in `ground_truth.yaml` before the run.
+  application and exposes `/webvisu.htm`. The matcher reports CODESYS at
+  CRITICAL: *confidently misattributed*, not uncertain. Confidence measures
+  evidential agreement, not attribution correctness — so E1 reports ICS
+  detection and vendor attribution as two separate rates.
 - **`.30`** is the hard negative: a consultancy page saying "process control",
   "SCADA migration", "HMI usability", "building management", "IEC 62443". It
   scores **0.000**. A keyword matcher flags it; the layered matcher does not,
   because body text alone never satisfies a content layer.
+
+`.19` is the **layer-L2 ablation control**: byte-identical content to `.11`
+with the same suppressed `Server` header, differing only by HTTPS with a
+self-signed certificate naming the product. The +0.137 confidence delta between
+the pair *is* L2's contribution, measured rather than inferred — and it
+independently confirms the weight arithmetic (0.15 / 1.10 = 0.136).
 
 Lab targets are **hand-authored from product documentation, never generated
 from `signatures.yaml`** — deriving targets from the detector's own patterns
@@ -259,42 +268,58 @@ rotate or clear function.
 
 **Executed and verified:**
 
-- Offline pipeline end-to-end (`scan → fingerprint → enrich → report`), 16 targets
-- **Live** async fingerprint against a real socket (aiohttp, `probe_http`,
-  candidate path probing, auth-wall detection) — scores **0.864, identical to
-  the offline replay**, which is what makes offline reproduction trustworthy
+- Offline pipeline end-to-end (`scan → fingerprint → enrich → report`), 17 targets
+- **Live** async fingerprint against real sockets (aiohttp, `probe_http`,
+  candidate path probing, auth-wall detection, **TLS layer L2 certificate
+  extraction**) — scores identical to the offline replay (0.864 for `.10`,
+  0.682 for the TLS target), which is what makes offline reproduction
+  trustworthy
+- `docker compose config` validated; all 17 static addresses confirmed
 - `monitor` over two cycles: baseline, diff, alert file; 0 alerts on an
   identical cycle (determinism), 34 correctly-graded alerts on a changed pair
 - Refusals: `--active` without scope → exit 2; direct `ActiveGrant(...)` →
   `ModeViolation`; denylist refusing documentation/private ranges
 - Audit hash-chain; credential guard (14 matching env vars ignored); grep gate
   zero matches; ruff + black clean
-- Threshold sweep 0.20/0.45/0.70 → 9/7/5 confirmed hosts, controls at 0.000
+- Threshold sweep → monotonic confirmed-host counts, controls at 0.000
   confidence at every operating point
+- Isolated L2 ablation delta +0.137, matching the configured weight exactly
 
 **Never executed — expect these to be where breakage lives:**
 
 - `masscan` subprocess (binary not installed in the dev container; only the
   `--dry-run` fixture path has run). Argument construction, rate clamping and
   output parsing are unit-level sound but the real invocation is unproven.
+- **Every script in `labs/kvm/`** — written and reviewed, never executed; the
+  dev container has no KVM and no outbound network. Read them before `sudo`.
+- `docker compose build`/`up` against real containers (no egress to pull images).
 - Live dataset calls to `stat.ripe.net`, `internetdb.shodan.io`, RIR delegation
   downloads and RDAP — outbound HTTPS is blocked by the dev container's proxy,
   so only fixture replay has run.
-- TLS certificate extraction (`_attach_tls_metadata`, layer L2) — needs an
-  HTTPS target; **no TLS target exists in the testbed yet**, so L2 has never
-  contributed to any score.
 - Reverse DNS (dnspython), live WHOIS/RDAP org attribution
 - `verify_with_nmap` (nmap not installed)
 - There is **no test suite yet**, so none of the above is protected against
   regression.
 
-Three bugs were found by running it rather than reading it, which is why the
-list above matters: the L5 URL-probe layer probed the alphabetically-first paths
-in the whole database against every host (so L5 never fired live, and any
-layer-ablation result would have been an artifact); `dry_run: true` in
-`monitor.yaml` was silently ignored for dataset lookups; and the monitor path
-discovered zero prefixes because a denylist allowance existed only in the scan
-path, reporting an empty baseline that looked like "nothing exposed".
+Six bugs so far were found by running the code rather than reading it, which is
+why the list above matters. None of them crashed; each would have produced a
+wrong number:
+
+1. **L5 never fired live** — path probing used the alphabetically-first paths in
+   the whole database, so a REDY device was asked for `/CitectSCADA`. Any
+   layer-ablation result would have been an artifact.
+2. **L2 never fired live** — the certificate was read via
+   `response.connection`, which aiohttp returns as `None`. Offline replay
+   "worked" because the fixture declares the subject, so the layer looked
+   functional while collecting nothing.
+3. **`dry_run: true` in `monitor.yaml` was ignored** for dataset lookups — the
+   monitor hit the live network while reporting a dry run.
+4. **Monitor discovered zero prefixes** — a denylist allowance existed only in
+   the scan path, so an empty baseline looked like "nothing exposed".
+5. **The `lab` port preset omitted 8088 and 8443**, so Ignition and the TLS
+   target would never have been found by a real active scan.
+6. **TLS context construction raised** under `-W error::DeprecationWarning`,
+   which this project's own pytest config sets.
 
 ## Status
 

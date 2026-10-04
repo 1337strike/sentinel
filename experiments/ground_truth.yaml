@@ -172,13 +172,27 @@ targets:
     version: null
     auth_wall: false
     expected_risk: "CRITICAL"
-    expected_detectable: weak
-    layers_present: ["L3", "L4"]
+    expected_detectable: strong_but_misattributed
+    layers_present: ["L3", "L4", "L5"]
+    expected_vendor_match: "CODESYS WebVisu"
     notes: >
-      DELIBERATELY AMBIGUOUS. The AC500 serves a CODESYS WebVisu application, so
-      the CODESYS WebVisu signature is a legitimate competing match. Expect an
-      off-diagonal confusion-matrix entry between ABB and CODESYS WebVisu; that
-      overlap is real-world behaviour, not a labelling error.
+      DELIBERATELY AMBIGUOUS, and the most interesting target in E1. The AC500
+      serves a CODESYS WebVisu application and exposes /webvisu.htm, so the
+      CODESYS signature matches on title, JS global AND product path. Sentinel
+      therefore reports "CODESYS WebVisu" at CRITICAL with ~0.55 confidence:
+      CONFIDENTLY MISATTRIBUTED, not uncertain.
+
+      This is the sharp version of the vendor-ambiguity finding, and it should
+      be reported as such rather than smoothed away: a layered detector gains
+      confidence from independent agreeing layers, but when a product embeds
+      another vendor's runtime, those layers agree on the *runtime* and the
+      hardware vendor is invisible. Confidence measures evidential agreement,
+      not attribution correctness -- a distinction worth making explicitly in
+      the discussion section.
+
+      Scoring note: counts as a true positive for ICS detection and as an error
+      for vendor attribution. E1 must report those two rates separately, or
+      this target silently inflates whichever one it is folded into.
 
   - ip: "10.99.0.18"
     port: 8080
@@ -196,6 +210,35 @@ targets:
       DELIBERATELY AMBIGUOUS. Honeywell building controllers embed the Niagara
       framework and the page says so, so Niagara/Tridium is a legitimate
       competing match. Second expected off-diagonal entry in E1.
+
+  # -------------------------------------------------------------------------
+  # TLS target -- the layer-L2 ablation control
+  # -------------------------------------------------------------------------
+
+  - ip: "10.99.0.19"
+    port: 8443
+    service: "https"
+    container: "sentinel-niagara-tls"
+    is_ics: true
+    vendor: "Niagara/Tridium"
+    vendor_detectable: true
+    version: "4.10.3.80"
+    auth_wall: true
+    expected_risk: "HIGH"
+    expected_detectable: strong
+    layers_present: ["L2", "L3", "L4"]
+    tls_subject: "/CN=JACE-8000-BUILDING-B/O=Tridium Inc/OU=Niagara Framework"
+    notes: >
+      PAIRED ABLATION CONTROL for 10.99.0.11. Identical content, identical
+      suppressed Server header; the only difference is that this one is served
+      over HTTPS with a self-signed certificate whose subject names the product.
+      The score delta between 10.99.0.11 and this target therefore isolates the
+      contribution of fingerprinting layer L2 exactly, rather than inferring it
+      from a post-hoc ablation. Report both scores together in E1.
+
+      Self-signed by design: that is what real ICS devices present, and it is
+      why the fingerprint TLS context disables verification and treats the
+      certificate purely as evidence to record.
 
   # -------------------------------------------------------------------------
   # ICS: industrial protocol endpoints (vendor NOT detectable -- zero payload)
@@ -324,11 +367,23 @@ targets:
 # editing this file without re-deriving the counts fails fast.
 # ===========================================================================
 expected:
-  total_targets: 16
-  ics_targets: 13
+  total_targets: 17
+  ics_targets: 14
   non_ics_targets: 3
-  vendor_detectable_targets: 9
+  vendor_detectable_targets: 10
   port_only_targets: 4
-  deliberately_weak: ["10.99.0.13", "10.99.0.17"]
+  # Only .13 remains threshold-sensitive. .17 was weak until it was given the
+  # /webvisu.htm endpoint a real AC500 serves; it now matches confidently, on
+  # the wrong vendor.
+  deliberately_weak: ["10.99.0.13"]
   deliberately_ambiguous: ["10.99.0.17", "10.99.0.18"]
+  # Correct ICS classification, wrong vendor attribution. Must be scored
+  # separately in the two confusion matrices.
+  expected_misattribution: ["10.99.0.17"]
   hard_negative: "10.99.0.30"
+  # Paired targets differing in exactly one fingerprinting layer. Scoring the
+  # pair isolates that layer's contribution without a post-hoc ablation.
+  layer_ablation_pairs:
+    - layer: "L2"
+      without: "10.99.0.11"
+      with: "10.99.0.19"

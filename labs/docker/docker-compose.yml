@@ -1,0 +1,290 @@
+# ===========================================================================
+# Sentinel reference testbed -- 17 targets on an isolated bridge
+# ===========================================================================
+#
+# Addresses are static and MUST match experiments/ground_truth.yaml, which is
+# the authoritative statement of what each target is. If you change an address
+# here, change it there and regenerate the seed fixtures
+# (labs/seed/refresh_seed.sh).
+#
+# `internal: true` on the network means Docker installs no NAT or masquerade
+# rule, so no container can reach the internet even if one tried. The host
+# still reaches them over the bridge, which is how Sentinel scans them. This is
+# the innermost of three isolation layers; see docs/REPRODUCE.md for the
+# libvirt network and the nftables egress drop above it.
+#
+# No port is published to the host (no `ports:` anywhere). Targets are reachable
+# only on the lab bridge. A published port would put a deliberately vulnerable
+# ICS simulator on the host's external interface, which is the one mistake in
+# this file that would actually matter.
+#
+#   docker compose build          # ONCE, while the guest still has internet
+#   docker compose up -d
+#   docker compose ps
+# ===========================================================================
+
+x-target: &target
+  image: sentinel-lab-targets:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  # Defence in depth: these targets are intentionally insecure *at the
+  # application layer*, so the container around them is locked down.
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp"]
+
+x-hmi: &hmi
+  <<: *target
+  volumes:
+    - ./hmi:/srv/hmi:ro
+    - ./controls:/srv/controls:ro
+
+services:
+
+  # =========================================================================
+  # ICS web interfaces
+  # =========================================================================
+
+  redy:
+    <<: *hmi
+    container_name: sentinel-redy
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "9000"
+      ROOT: /srv/hmi/redy
+      SERVER_HEADER: "REDY-Process/2.4.1 lighttpd/1.4.55"
+      PRODUCT_PATHS: "/api/datapoints,/process/overview,/redy,/cgi-bin/redy"
+    networks:
+      lab: {ipv4_address: 10.99.0.10}
+
+  # No Server header: exercises the title + JS layers with L1 absent.
+  niagara:
+    <<: *hmi
+    container_name: sentinel-niagara
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/niagara
+      SERVER_HEADER: ""
+      PRODUCT_PATHS: "/login,/ord,/prelogin"
+    networks:
+      lab: {ipv4_address: 10.99.0.11}
+
+  ignition:
+    <<: *hmi
+    container_name: sentinel-ignition
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8088"
+      ROOT: /srv/hmi/ignition
+      SERVER_HEADER: "Jetty(9.4.44.v20210927)"
+      PRODUCT_PATHS: "/main/web/status,/main/web/config,/system/gateway"
+    networks:
+      lab: {ipv4_address: 10.99.0.12}
+
+  # DELIBERATELY WEAK: title keyword only, no header, no JS global, no product
+  # path. Expected to land near the confirmation threshold. This is the target
+  # that makes the E1 ROC curve non-degenerate -- do not "fix" it.
+  wonderware:
+    <<: *hmi
+    container_name: sentinel-wonderware
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/wonderware
+      SERVER_HEADER: ""
+    networks:
+      lab: {ipv4_address: 10.99.0.13}
+
+  factorytalk:
+    <<: *hmi
+    container_name: sentinel-factorytalk
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/factorytalk
+      SERVER_HEADER: "Microsoft-IIS/10.0 FactoryTalk/12.0"
+    networks:
+      lab: {ipv4_address: 10.99.0.14}
+
+  citect:
+    <<: *hmi
+    container_name: sentinel-citect
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/citect
+      SERVER_HEADER: "CitectSCADA/8.10 Microsoft-IIS/8.5"
+    networks:
+      lab: {ipv4_address: 10.99.0.15}
+
+  geifix:
+    <<: *hmi
+    container_name: sentinel-geifix
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/geifix
+      SERVER_HEADER: "Proficy-iFIX/6.1"
+      PRODUCT_PATHS: "/Webspace,/iFIX,/Proficy"
+    networks:
+      lab: {ipv4_address: 10.99.0.16}
+
+  # DELIBERATELY AMBIGUOUS: an AC500 genuinely serves CODESYS WebVisu, so the
+  # CODESYS signature is a legitimate competing match. Produces a real
+  # off-diagonal confusion-matrix entry.
+  abb:
+    <<: *hmi
+    container_name: sentinel-abb
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/abb
+      SERVER_HEADER: ""
+      PRODUCT_PATHS: "/webvisu.htm,/plc/webvisu.htm"
+    networks:
+      lab: {ipv4_address: 10.99.0.17}
+
+  # DELIBERATELY AMBIGUOUS: Honeywell building controllers embed Niagara, and
+  # the page says so. Second expected off-diagonal entry.
+  honeywell:
+    <<: *hmi
+    container_name: sentinel-honeywell
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/hmi/honeywell
+      SERVER_HEADER: "Honeywell-WEBvision/3.2"
+    networks:
+      lab: {ipv4_address: 10.99.0.18}
+
+  # =========================================================================
+  # TLS target -- the layer-L2 ablation control
+  # =========================================================================
+  #
+  # Serves the SAME content as `niagara` (10.99.0.11) with the SAME suppressed
+  # Server header, over HTTPS with a self-signed certificate whose subject
+  # names the product. The only difference between the two targets is the
+  # certificate, so the score delta between them isolates L2's contribution
+  # exactly. That is a per-layer ablation built into the testbed rather than
+  # inferred after the fact.
+  niagara-tls:
+    <<: *hmi
+    container_name: sentinel-niagara-tls
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8443"
+      ROOT: /srv/hmi/niagara
+      SERVER_HEADER: ""
+      TLS: "1"
+      TLS_SUBJECT: "/CN=JACE-8000-BUILDING-B/O=Tridium Inc/OU=Niagara Framework"
+      PRODUCT_PATHS: "/login,/ord,/prelogin"
+    networks:
+      lab: {ipv4_address: 10.99.0.19}
+
+  # =========================================================================
+  # Industrial protocol endpoints -- vendor NOT detectable (zero payload)
+  # =========================================================================
+
+  modbus:
+    <<: *target
+    container_name: sentinel-modbus
+    command: ["python", "/srv/targets/modbus_server.py"]
+    environment:
+      PORT: "502"
+    networks:
+      lab: {ipv4_address: 10.99.0.20}
+
+  # Stub, not a real S7 stack -- see tcp_stub.py for why that is equivalent
+  # for a listen-only detector, and what E1 therefore must not claim.
+  s7:
+    <<: *target
+    container_name: sentinel-s7
+    command: ["python", "/srv/targets/tcp_stub.py"]
+    environment:
+      PORT: "102"
+      LABEL: "s7comm"
+    networks:
+      lab: {ipv4_address: 10.99.0.21}
+
+  opcua:
+    <<: *target
+    container_name: sentinel-opcua
+    command: ["python", "/srv/targets/opcua_server.py"]
+    environment:
+      PORT: "4840"
+      SERVER_NAME: "PlantOpcUaServer"
+    networks:
+      lab: {ipv4_address: 10.99.0.22}
+
+  fox:
+    <<: *target
+    container_name: sentinel-fox
+    command: ["python", "/srv/targets/tcp_stub.py"]
+    environment:
+      PORT: "1911"
+      LABEL: "niagara-fox"
+    networks:
+      lab: {ipv4_address: 10.99.0.23}
+
+  # =========================================================================
+  # Non-ICS false-positive controls (experiment E2)
+  # =========================================================================
+
+  # THE HARD NEGATIVE. A consultancy page using industrial vocabulary
+  # throughout -- "process control", "SCADA migration", "HMI", "building
+  # management", "IEC 62443" -- while being an ordinary web server. A
+  # keyword-matching detector flags this. The most informative target in E2.
+  control-corporate:
+    <<: *hmi
+    container_name: sentinel-control-corporate
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "80"
+      ROOT: /srv/controls/corporate
+      SERVER_HEADER: "nginx/1.25.3"
+    networks:
+      lab: {ipv4_address: 10.99.0.30}
+
+  # Server-speaks-first: emits an identification banner on connect, so the
+  # listen-only TCP probe path is exercised with a NON-EMPTY read. Nothing
+  # accepts credentials; it is a banner, not an SSH service.
+  control-ssh:
+    <<: *target
+    container_name: sentinel-control-ssh
+    command: ["python", "/srv/targets/tcp_stub.py"]
+    environment:
+      PORT: "22"
+      LABEL: "ssh-control"
+      BANNER: "SSH-2.0-OpenSSH_9.6p1 Debian-4"
+    networks:
+      lab: {ipv4_address: 10.99.0.31}
+
+  control-intranet:
+    <<: *hmi
+    container_name: sentinel-control-intranet
+    command: ["python", "/srv/targets/hmi_server.py"]
+    environment:
+      PORT: "8080"
+      ROOT: /srv/controls/intranet
+      SERVER_HEADER: "nginx/1.25.3"
+    networks:
+      lab: {ipv4_address: 10.99.0.32}
+
+networks:
+  lab:
+    name: sentinel-lab
+    driver: bridge
+    # No NAT, no masquerade: nothing here can reach the internet. The host
+    # still reaches the bridge, which is how Sentinel scans the targets.
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.99.0.0/24
+          gateway: 10.99.0.1
+    driver_opts:
+      com.docker.network.bridge.name: br-sentinel-lab
